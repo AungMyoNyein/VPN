@@ -1,0 +1,96 @@
+---
+- name: Deploy WireGuard VPN Lab Node and Node Agent
+  hosts: vpn_lab_nodes
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Install required network packages
+      ansible.builtin.apt:
+        name:
+          - wireguard
+          - wireguard-tools
+          - nftables
+          - iproute2
+          - curl
+          - ca-certificates
+        state: present
+        update_cache: yes
+
+    - name: Ensure IPv4 forwarding is enabled via sysctl
+      ansible.posix.sysctl:
+        name: net.ipv4.ip_forward
+        value: '1'
+        sysctl_file: /etc/sysctl.d/99-vpn-platform.conf
+        state: present
+        reload: yes
+
+    - name: Create WireGuard and Node Agent configuration directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0700'
+      loop:
+        - /etc/wireguard
+        - /etc/vpn-platform
+        - /var/log/vpn-platform
+
+    - name: Generate WireGuard server private key if not present
+      ansible.builtin.shell: |
+        wg genkey | tee /etc/wireguard/private.key | wg pubkey > /etc/wireguard/public.key
+        chmod 600 /etc/wireguard/private.key
+      args:
+        creates: /etc/wireguard/private.key
+
+    - name: Template Node Agent environment configuration
+      ansible.builtin.copy:
+        dest: /etc/vpn-platform/node-agent.env
+        owner: root
+        group: root
+        mode: '0600'
+        content: |
+          AGENT_NODE_ID={{ agent_node_id }}
+          AGENT_NODE_CODE={{ agent_node_code }}
+          AGENT_HTTP_ADDR={{ agent_http_addr }}
+          AGENT_WG_IFACE={{ agent_wg_iface }}
+          AGENT_WG_KEY_PATH=/etc/wireguard/private.key
+          AGENT_WG_PORT={{ agent_wg_port }}
+          AGENT_AUTHORIZED_POOLS={{ agent_authorized_pools }}
+          AGENT_WAN_IFACE={{ agent_wan_iface }}
+          AGENT_VERSION={{ agent_version }}
+          AGENT_LOG_LEVEL=info
+
+    - name: Install Node Agent systemd unit
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/vpn-node-agent.service
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=VPN Platform WireGuard Node Agent
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=simple
+          EnvironmentFile=/etc/vpn-platform/node-agent.env
+          ExecStart=/usr/local/bin/vpn-node-agent
+          Restart=on-failure
+          RestartSec=5s
+          LimitNOFILE=65535
+
+          # Security Hardening
+          NoNewPrivileges=yes
+          ProtectSystem=full
+          ProtectHome=yes
+          PrivateTmp=yes
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Reload systemd daemon
+      ansible.builtin.systemd:
+        daemon_reload: yes

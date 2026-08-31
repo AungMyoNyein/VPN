@@ -1,0 +1,21 @@
+[Unit]
+Description=VPN Platform WireGuard Node Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/vpn-platform/node-agent.env
+ExecStart=/usr/local/bin/vpn-node-agent
+Restart=on-failure
+RestartSec=5s
+LimitNOFILE=65535
+
+# Security Hardening
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,7 @@
+# Node agent example configuration (Phase 0)
+# Prefer environment variables. Adapter "fake" only until Phase 3.
+
+http_addr: ":8082"
+node_code: "DEV-01"
+adapter: "fake"
+cp_base_url: "http://control-plane:8081"

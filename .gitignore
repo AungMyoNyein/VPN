@@ -1,0 +1,74 @@
+# Secrets & local env
+.env
+.env.*
+!.env.example
+!**/.env.example
+*.pem
+*.key
+!*.key.example
+id_rsa*
+*.p12
+*.mobileprovision
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Logs & temp
+*.log
+tmp/
+temp/
+.cache/
+
+# Backend (Laravel)
+backend/vendor/
+backend/node_modules/
+backend/public/build/
+backend/public/hot
+backend/public/storage
+backend/storage/*.key
+backend/storage/pail
+backend/database/*.sqlite
+backend/database/*.sqlite-journal
+backend/.phpunit.result.cache
+backend/auth.json
+
+# Go
+control-plane/bin/
+node-agent/bin/
+**/coverage.out
+**/coverage.html
+
+# Flutter / mobile
+mobile/.dart_tool/
+mobile/.flutter-plugins
+mobile/.flutter-plugins-dependencies
+mobile/.packages
+mobile/build/
+mobile/.pub-cache/
+mobile/.pub/
+mobile/ios/Pods/
+mobile/ios/.symlinks/
+mobile/android/.gradle/
+mobile/android/local.properties
+mobile/android/app/debug
+mobile/android/app/profile
+mobile/android/app/release
+mobile/**/*.iml
+
+# CRM
+crm/node_modules/
+crm/dist/
+
+# Infrastructure local overrides
+infrastructure/docker/docker-compose.override.yml
+
+# Test / CI artifacts
+coverage/
+junit.xml
+test-results/

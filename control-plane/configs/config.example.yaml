@@ -1,0 +1,7 @@
+# Control plane example configuration (Phase 0)
+# Prefer environment variables in Compose/K8s. This file documents keys only.
+
+env: local
+http_addr: ":8081"
+# Never commit real tokens
+service_token: "dev-only-change-me"
