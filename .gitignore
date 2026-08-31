@@ -1,4 +1,5 @@
 # Secrets & local env
+.github/workflows/
 .env
 .env.*
 !.env.example
