@@ -410,6 +410,9 @@ class VpnProvisioningService
         $security = $vless['security'] ?? 'tls';
         $sni = $vless['sni'] ?? $host;
         $flow = $vless['flow'] ?? null;
+        if ($security === 'tls' && is_string($flow) && str_starts_with($flow, 'xtls-')) {
+            $flow = null;
+        }
         $fingerprint = $vless['fingerprint'] ?? 'chrome';
 
         $params = [

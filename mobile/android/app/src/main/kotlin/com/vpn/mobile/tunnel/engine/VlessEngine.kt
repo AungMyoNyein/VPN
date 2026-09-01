@@ -52,7 +52,11 @@ class VlessEngine : VpnEngine {
             try {
                 ensureLibboxSetup(service)
                 val configJson = SingBoxConfigBuilder.build(vlessConfig)
-                val platformImpl = SingBoxPlatformInterface(service, service.applicationContext)
+                val platformImpl = SingBoxPlatformInterface(
+                    service,
+                    service.applicationContext,
+                    vlessConfig.dnsServers,
+                )
                 platform = platformImpl
 
                 val serviceInstance = Libbox.newService(configJson, platformImpl)
@@ -79,6 +83,7 @@ class VlessEngine : VpnEngine {
         options.basePath = base.absolutePath
         options.workingPath = File(base, "working").apply { mkdirs() }.absolutePath
         options.tempPath = File(base, "tmp").apply { mkdirs() }.absolutePath
+        options.fixAndroidStack = true
         Libbox.setup(options)
     }
 

@@ -35,6 +35,7 @@ data class VlessTunnelConfig(
             val sni = (map["sni"] as? String)?.trim() ?: serverHost
             val fingerprint = (map["fingerprint"] as? String)?.trim() ?: "chrome"
             val flow = (map["flow"] as? String)?.trim()?.takeIf { it.isNotEmpty() }
+                ?.takeUnless { security == "tls" && it.startsWith("xtls-") }
 
             @Suppress("UNCHECKED_CAST")
             val alpn = (map["alpn"] as? List<String>)?.map { it.trim() }?.filter { it.isNotEmpty() }

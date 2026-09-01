@@ -28,7 +28,7 @@ return [
         'default_port' => (int) env('VPN_VLESS_PORT', 443),
         'mtu' => (int) env('VPN_VLESS_MTU', 1400),
         'security' => env('VPN_VLESS_SECURITY', 'tls'),
-        'flow' => env('VPN_VLESS_FLOW', 'xtls-rprx-vision'),
+        'flow' => env('VPN_VLESS_FLOW') ?: null,
         'alpn' => env('VPN_VLESS_ALPN', 'h2,http/1.1'),
         'fingerprint' => env('VPN_VLESS_FINGERPRINT', 'chrome'),
     ],

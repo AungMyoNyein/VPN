@@ -25,6 +25,7 @@ import java.net.NetworkInterface as JavaNetworkInterface
 class SingBoxPlatformInterface(
     private val vpnService: VpnService,
     private val appContext: Context,
+    private val dnsServers: List<String> = emptyList(),
 ) : PlatformInterface {
 
     companion object {
@@ -69,14 +70,23 @@ class SingBoxPlatformInterface(
 
         // IPv4-only: do not add IPv6 addresses or ::/0 routes.
         if (options.autoRoute) {
-            try {
-                val dnsBox = options.dnsServerAddress
-                val dns = dnsBox.value
-                if (!dns.isNullOrBlank()) {
+            var dnsAdded = false
+            for (dns in dnsServers) {
+                if (dns.isNotBlank()) {
                     builder.addDnsServer(dns)
+                    dnsAdded = true
                 }
-            } catch (_: Exception) {
-                // DNS hijack address unavailable; route DNS via sing-box in userspace.
+            }
+            if (!dnsAdded) {
+                try {
+                    val dnsBox = options.dnsServerAddress
+                    val dns = dnsBox.value
+                    if (!dns.isNullOrBlank()) {
+                        builder.addDnsServer(dns)
+                    }
+                } catch (_: Exception) {
+                    builder.addDnsServer("1.1.1.1")
+                }
             }
             builder.addRoute("0.0.0.0", 0)
         }

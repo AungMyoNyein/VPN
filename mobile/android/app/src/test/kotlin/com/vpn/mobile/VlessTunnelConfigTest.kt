@@ -52,5 +52,14 @@ class VlessTunnelConfigTest {
     assertTrue(tls.getBoolean("enabled"))
     assertFalse(tls.getBoolean("insecure"))
     assertEquals("zentunnel.net", tls.getString("server_name"))
+  @Test
+  fun singBoxConfigOmitsXtlsFlowForPlainTls() {
+    val json = JSONObject(
+      SingBoxConfigBuilder.build(
+        sampleConfig().copy(flow = "xtls-rprx-vision")
+      )
+    )
+    val outbound = json.getJSONArray("outbounds").getJSONObject(0)
+    assertFalse(outbound.has("flow"))
   }
 }
