@@ -244,4 +244,47 @@ class VpnProvisioningTest extends ActivationTestCase
         $recResponse->assertStatus(200);
         $this->assertEquals($this->node->id, $recResponse->json('data.node_id'));
     }
+
+    public function test_13_vless_provisioning_returns_structured_config(): void
+    {
+        $this->node->update([
+            'supported_protocols' => ['wireguard', 'vless'],
+            'vless_port' => 8443,
+            'protocol_config' => [
+                'vless' => [
+                    'security' => 'tls',
+                    'sni' => 'zentunnel.net',
+                    'fingerprint' => 'chrome',
+                ],
+            ],
+        ]);
+
+        Http::fake([
+            '*/internal/v1/peers*' => Http::response([
+                'data' => [
+                    'id' => 2,
+                    'peer_id' => 'peer_vless_mock',
+                    'status' => 'ACTIVE',
+                ],
+            ], 200),
+        ]);
+
+        $response = $this->withDeviceCredential($this->rawToken)->postJson('/api/v1/vpn/provision', [
+            'location_id' => $this->location->id,
+            'protocol' => 'vless',
+        ]);
+
+        $response->assertCreated();
+        $data = $response->json('data');
+
+        $this->assertSame('vless', $data['protocol']);
+        $this->assertArrayHasKey('connection_id', $data);
+        $this->assertArrayHasKey('vless', $data);
+        $this->assertSame('tcp', $data['vless']['transport']);
+        $this->assertSame('tls', $data['vless']['security']);
+        $this->assertSame('zentunnel.net', $data['server']['host']);
+        $this->assertSame(8443, $data['server']['port']);
+        $this->assertArrayHasKey('share_url', $data);
+        $this->assertStringStartsWith('vless://', $data['share_url']);
+    }
 }

@@ -2,11 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:vpn_mobile/core/models/vpn_location.dart';
 import 'package:vpn_mobile/state/app_auth_state.dart';
+import 'package:vpn_mobile/state/vpn_manager.dart';
 
 class LocationsScreen extends StatefulWidget {
-  const LocationsScreen({super.key});
+  const LocationsScreen({super.key, this.embedded = false});
 
   static const routeName = '/locations';
+
+  final bool embedded;
 
   @override
   State<LocationsScreen> createState() => _LocationsScreenState();
@@ -16,6 +19,7 @@ class _LocationsScreenState extends State<LocationsScreen> {
   List<VpnLocation>? _locations;
   bool _loading = true;
   String? _error;
+  String _query = '';
 
   @override
   void initState() {
@@ -41,18 +45,41 @@ class _LocationsScreenState extends State<LocationsScreen> {
     } catch (e) {
       if (mounted) {
         setState(() {
-          _error = 'Failed to load locations: $e';
+          _error = 'Failed to load locations';
           _loading = false;
         });
       }
     }
   }
 
+  void _selectSmartLocation() {
+    final vpn = context.read<VpnManager>();
+    vpn.selectLocation(null);
+    if (!widget.embedded) Navigator.of(context).pop();
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Smart Location selected')),
+    );
+  }
+
+  void _selectLocation(VpnLocation location) {
+    if (!location.available) return;
+    final vpn = context.read<VpnManager>();
+    vpn.selectLocation(location);
+    if (!widget.embedded) Navigator.of(context).pop();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('${location.displayName} selected')),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final vpn = context.watch<VpnManager>();
+    final selectedId = vpn.selectedLocation?.id;
+    final smartSelected = vpn.preferences?.smartLocation ?? true;
+
     return Scaffold(
       appBar: AppBar(
-        title: const Text('VPN Locations'),
+        title: const Text('Locations'),
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
@@ -60,59 +87,99 @@ class _LocationsScreenState extends State<LocationsScreen> {
           ),
         ],
       ),
-      body: _buildBody(),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+            child: TextField(
+              decoration: InputDecoration(
+                hintText: 'Search countries',
+                prefixIcon: const Icon(Icons.search),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                isDense: true,
+              ),
+              onChanged: (v) => setState(() => _query = v.trim().toLowerCase()),
+            ),
+          ),
+          Expanded(child: _buildBody(selectedId, smartSelected)),
+        ],
+      ),
     );
   }
 
-  Widget _buildBody() {
+  Widget _buildBody(int? selectedId, bool smartSelected) {
     if (_loading) {
       return const Center(child: CircularProgressIndicator());
     }
 
     if (_error != null) {
       return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(_error!, textAlign: TextAlign.center),
-              const SizedBox(height: 12),
-              ElevatedButton(
-                onPressed: _loadLocations,
-                child: const Text('Retry'),
-              ),
-            ],
-          ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(_error!),
+            const SizedBox(height: 12),
+            ElevatedButton(onPressed: _loadLocations, child: const Text('Retry')),
+          ],
         ),
       );
     }
 
-    final locations = _locations ?? [];
-    if (locations.isEmpty) {
-      return const Center(
-        child: Text('No active VPN locations available.'),
-      );
-    }
+    final locations = (_locations ?? [])
+        .where((l) =>
+            _query.isEmpty ||
+            l.displayName.toLowerCase().contains(_query) ||
+            l.countryName.toLowerCase().contains(_query))
+        .toList();
 
-    return ListView.builder(
-      itemCount: locations.length,
-      itemBuilder: (context, index) {
-        final loc = locations[index];
-        return ListTile(
+    return ListView(
+      children: [
+        ListTile(
           leading: Icon(
-            Icons.public,
-            color: loc.available ? Colors.green : Colors.grey,
+            Icons.auto_awesome,
+            color: smartSelected ? Theme.of(context).colorScheme.primary : null,
           ),
-          title: Text(loc.displayName),
+          title: const Text('Smart Location'),
           subtitle: Text(
-            '${loc.serversCount} server(s) • ${loc.available ? 'Available' : 'Capacity full'}',
+            context.watch<VpnManager>().recommendedServer?.name ??
+                'Best available server',
           ),
-          trailing: loc.available
-              ? const Icon(Icons.check_circle_outline, color: Colors.green)
-              : const Icon(Icons.block, color: Colors.grey),
-        );
-      },
+          trailing: smartSelected
+              ? Icon(Icons.check_circle, color: Theme.of(context).colorScheme.primary)
+              : null,
+          onTap: _selectSmartLocation,
+        ),
+        const Divider(height: 1),
+        if (locations.isEmpty)
+          const Padding(
+            padding: EdgeInsets.all(24),
+            child: Center(child: Text('No active VPN locations available.')),
+          )
+        else
+          ...locations.map((loc) {
+            final selected = !smartSelected && selectedId == loc.id;
+            return ListTile(
+              leading: Icon(
+                Icons.public,
+                color: loc.available
+                    ? Theme.of(context).colorScheme.primary
+                    : Theme.of(context).colorScheme.outline,
+              ),
+              title: Text(loc.displayName),
+              subtitle: Text(
+                '${loc.serversCount} server(s) • ${loc.available ? 'Available' : 'Capacity full'}',
+              ),
+              trailing: selected
+                  ? Icon(Icons.check_circle, color: Theme.of(context).colorScheme.primary)
+                  : loc.available
+                      ? null
+                      : const Icon(Icons.block),
+              onTap: loc.available ? () => _selectLocation(loc) : null,
+            );
+          }),
+      ],
     );
   }
 }

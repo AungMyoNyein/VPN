@@ -30,6 +30,14 @@ func (m *MultiNodeAdapter) SetNodeType(nodeID string, adapterType string) {
 	m.nodeTypes[nodeID] = adapterType
 }
 
+// RegisterRemoteNode records adapter routing and remote agent connection details.
+func (m *MultiNodeAdapter) RegisterRemoteNode(cfg RemoteNodeConfig) {
+	m.SetNodeType(cfg.NodeID, cfg.AdapterType)
+	if m.remoteAdapter != nil && cfg.AdapterType == "remote" {
+		m.remoteAdapter.RegisterNode(cfg)
+	}
+}
+
 func (m *MultiNodeAdapter) getAdapter(nodeID string) NodeAdapter {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

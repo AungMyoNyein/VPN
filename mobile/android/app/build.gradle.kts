@@ -60,6 +60,7 @@ flutter {
 }
 
 dependencies {
+    implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar", "*.jar"))))
     implementation("com.wireguard.android:tunnel:1.0.20260102")
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.security:security-crypto:1.1.0-alpha06")

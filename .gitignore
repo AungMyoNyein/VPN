@@ -61,6 +61,7 @@ mobile/android/app/debug
 mobile/android/app/profile
 mobile/android/app/release
 mobile/**/*.iml
+mobile/*.apk
 
 # CRM
 crm/node_modules/

@@ -26,6 +26,9 @@ class VpnNode extends Model
         'agent_endpoint',
         'agent_version',
         'wireguard_interface',
+        'supported_protocols',
+        'vless_port',
+        'protocol_config',
         'weight',
         'last_heartbeat_at',
         'last_synced_at',
@@ -45,7 +48,43 @@ class VpnNode extends Model
             'last_synced_at' => 'datetime',
             'latest_rx_bytes' => 'integer',
             'latest_tx_bytes' => 'integer',
+            'supported_protocols' => 'array',
+            'protocol_config' => 'array',
         ];
+    }
+
+    /**
+     * @return list<string>
+     */
+    public function supportedProtocols(): array
+    {
+        $protocols = $this->supported_protocols;
+        if (! is_array($protocols) || $protocols === []) {
+            return ['wireguard'];
+        }
+
+        return array_values($protocols);
+    }
+
+    public function supportsProtocol(string $protocol): bool
+    {
+        return in_array(strtolower($protocol), $this->supportedProtocols(), true);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function vlessConfig(): array
+    {
+        $defaults = config('vpn.vless', []);
+        $nodeConfig = is_array($this->protocol_config) ? $this->protocol_config : [];
+
+        return array_merge($defaults, $nodeConfig);
+    }
+
+    public function vlessPort(): int
+    {
+        return (int) ($this->vless_port ?? config('vpn.vless.default_port', 443));
     }
 
     public function location(): BelongsTo

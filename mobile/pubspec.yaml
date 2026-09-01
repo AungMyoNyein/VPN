@@ -1,5 +1,5 @@
 name: vpn_mobile
-description: Commercial VPN platform mobile client (Phase 0 skeleton).
+description: Commercial VPN platform mobile client (Phase 5 Android WireGuard).
 publish_to: "none"
 version: 0.1.0+1
 
@@ -12,6 +12,7 @@ dependencies:
   http: ^1.2.2
   flutter_secure_storage: ^9.2.2
   provider: ^6.1.2
+  shared_preferences: ^2.3.3
 
 dev_dependencies:
   flutter_test:

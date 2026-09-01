@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:vpn_mobile/core/app_config.dart';
 import 'package:vpn_mobile/state/app_auth_state.dart';
+import 'package:vpn_mobile/state/vpn_manager.dart';
 
 class AccountScreen extends StatelessWidget {
   const AccountScreen({super.key});
@@ -48,6 +49,10 @@ class AccountScreen extends StatelessWidget {
                   ? '—'
                   : '${account.devicesUsed} / ${account.devicesLimit}',
             ),
+          ),
+          ListTile(
+            title: const Text('VPN Location'),
+            subtitle: Text(context.watch<VpnManager>().locationLabel),
           ),
           const ListTile(
             title: Text('App version'),

@@ -1,6 +1,9 @@
 import 'dart:convert';
+import 'dart:io' show Platform;
 import 'dart:math';
-import 'package:vpn_mobile/core/secure_credential_store.dart';
+
+import 'package:flutter/foundation.dart';
+import 'package:vpn_mobile/core/native_vpn_service.dart';
 
 abstract class WireguardKeyStore {
   Future<String?> getPrivateKey();
@@ -8,26 +11,21 @@ abstract class WireguardKeyStore {
   Future<void> deletePrivateKey();
 }
 
-class SecureWireguardKeyStore implements WireguardKeyStore {
-  SecureWireguardKeyStore({SecureCredentialStore? credentialStore})
-      : _credentialStore = credentialStore ?? FlutterSecureCredentialStore();
+/// Android Keystore-backed storage via platform channel.
+class PlatformWireguardKeyStore implements WireguardKeyStore {
+  PlatformWireguardKeyStore({NativeVpnService? nativeVpn})
+      : _nativeVpn = nativeVpn ?? NativeVpnService();
 
-  final SecureCredentialStore _credentialStore;
-
-  @override
-  Future<String?> getPrivateKey() async {
-    return _credentialStore.readDeviceCredential();
-  }
+  final NativeVpnService _nativeVpn;
 
   @override
-  Future<void> savePrivateKey(String key) async {
-    await _credentialStore.saveDeviceCredential(key);
-  }
+  Future<String?> getPrivateKey() => _nativeVpn.getPrivateKey();
 
   @override
-  Future<void> deletePrivateKey() async {
-    await _credentialStore.deleteDeviceCredential();
-  }
+  Future<void> savePrivateKey(String key) => _nativeVpn.savePrivateKey(key);
+
+  @override
+  Future<void> deletePrivateKey() => _nativeVpn.deletePrivateKey();
 }
 
 class InMemoryWireguardKeyStore implements WireguardKeyStore {
@@ -44,31 +42,50 @@ class InMemoryWireguardKeyStore implements WireguardKeyStore {
 }
 
 class WireguardKeyService {
-  WireguardKeyService({WireguardKeyStore? keyStore})
-      : _keyStore = keyStore ?? InMemoryWireguardKeyStore();
+  WireguardKeyService({
+    WireguardKeyStore? keyStore,
+    NativeVpnService? nativeVpn,
+  })  : _nativeVpn = nativeVpn ?? NativeVpnService(),
+        _keyStore = keyStore ?? _defaultKeyStore(nativeVpn);
 
+  final NativeVpnService _nativeVpn;
   final WireguardKeyStore _keyStore;
 
-  /// Get or generate a 32-byte WireGuard public key (Base64 encoded, 44 chars).
-  /// Note: The private key is NEVER sent to the backend.
+  static WireguardKeyStore _defaultKeyStore(NativeVpnService? nativeVpn) {
+    if (!kIsWeb && Platform.isAndroid) {
+      return PlatformWireguardKeyStore(nativeVpn: nativeVpn);
+    }
+    return InMemoryWireguardKeyStore();
+  }
+
+  /// Returns the WireGuard public key (44-char base64). Private key never leaves device.
   Future<String> getOrCreatePublicKey() async {
     var privateKey = await _keyStore.getPrivateKey();
     if (privateKey == null || privateKey.isEmpty) {
-      privateKey = _generateRandomKeyBase64();
+      if (!kIsWeb && Platform.isAndroid) {
+        final pair = await _nativeVpn.generateKeyPair();
+        privateKey = pair.privateKey;
+        await _keyStore.savePrivateKey(privateKey);
+        return pair.publicKey;
+      }
+      privateKey = _generateTestKeyBase64();
       await _keyStore.savePrivateKey(privateKey);
     }
-
-    // Derive public key representation (for Phase 3 fake adapter, simulated 32-byte key)
-    return _derivePublicKey(privateKey);
+    return _deriveTestPublicKey(privateKey);
   }
 
-  String _generateRandomKeyBase64() {
+  Future<String?> getPrivateKey() => _keyStore.getPrivateKey();
+
+  Future<void> deleteKeys() => _keyStore.deletePrivateKey();
+
+  /// Test/dev fallback only — Android production uses native KeyPair generation.
+  String _generateTestKeyBase64() {
     final random = Random.secure();
     final bytes = List<int>.generate(32, (_) => random.nextInt(256));
     return base64Encode(bytes);
   }
 
-  String _derivePublicKey(String privateKey) {
+  String _deriveTestPublicKey(String privateKey) {
     final bytes = base64Decode(privateKey);
     final pubBytes = List<int>.generate(32, (i) => (bytes[i] ^ 0x5A) & 0xFF);
     return base64Encode(pubBytes);

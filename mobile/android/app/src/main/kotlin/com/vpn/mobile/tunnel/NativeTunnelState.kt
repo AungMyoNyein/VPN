@@ -1,7 +1,7 @@
 package com.vpn.mobile.tunnel
 
 /**
- * Authoritative connection states matching Android VpnService and WireGuard state engine.
+ * Authoritative connection states matching Android VpnService and tunnel engine state.
  */
 enum class NativeTunnelState(val rawValue: String) {
     DISCONNECTED("disconnected"),
@@ -21,20 +21,6 @@ enum class NativeTunnelState(val rawValue: String) {
                 ?: DISCONNECTED
         }
     }
-}
-
-/**
- * Standardized error codes for Flutter/Kotlin native contract.
- */
-object NativeTunnelErrorCode {
-    const val PERMISSION_DENIED = "PERMISSION_DENIED"
-    const val INVALID_CONFIG = "INVALID_CONFIG"
-    const val TUNNEL_START_FAILED = "TUNNEL_START_FAILED"
-    const val HANDSHAKE_TIMEOUT = "HANDSHAKE_TIMEOUT"
-    const val NETWORK_LOST = "NETWORK_LOST"
-    const val KEYSTORE_ERROR = "KEYSTORE_ERROR"
-    const val SERVICE_UNAVAILABLE = "SERVICE_UNAVAILABLE"
-    const val UNKNOWN = "UNKNOWN"
 }
 
 data class TunnelStatistics(

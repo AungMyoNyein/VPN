@@ -9,6 +9,7 @@ import 'package:vpn_mobile/core/models/activation_result.dart';
 import 'package:vpn_mobile/core/models/device_registration.dart';
 import 'package:vpn_mobile/core/models/subscription_info.dart';
 import 'package:vpn_mobile/core/models/vpn_location.dart';
+import 'package:vpn_mobile/core/models/vpn_protocol.dart';
 import 'package:vpn_mobile/core/models/vpn_provision_result.dart';
 
 class ApiClient {
@@ -107,25 +108,51 @@ class ApiClient {
     return [];
   }
 
-  Future<VpnServerInfo?> getRecommendedServer() async {
-    final data = await _get('/vpn/recommended-server', authenticated: true);
+  Future<VpnServerInfo?> getRecommendedServer({VpnProtocol? protocol}) async {
+    final query = protocol != null ? '?protocol=${protocol.value}' : '';
+    final data = await _get('/vpn/recommended-server$query', authenticated: true);
     return VpnServerInfo.fromJson(data);
   }
 
   Future<VpnProvisionResult> provisionVpn({
     int? locationId,
-    required String clientPublicKey,
+    String? clientPublicKey,
+    String? clientUuid,
+    VpnProtocol protocol = VpnProtocol.wireguard,
+    String? idempotencyKey,
   }) async {
+    final body = <String, dynamic>{
+      'protocol': protocol.value,
+      if (locationId != null) 'location_id': locationId,
+    };
+
+    if (protocol == VpnProtocol.wireguard) {
+      body['client_public_key'] = clientPublicKey ?? '';
+    } else {
+      if (clientUuid != null && clientUuid.isNotEmpty) {
+        body['client_uuid'] = clientUuid;
+      }
+    }
+
     final data = await _post(
       '/vpn/provision',
-      body: {
-        if (locationId != null) 'location_id': locationId,
-        'client_public_key': clientPublicKey,
-      },
+      body: body,
       authenticated: true,
+      idempotencyKey: idempotencyKey,
     );
 
     return VpnProvisionResult.fromJson(data);
+  }
+
+  Future<List<VpnProtocol>> getProtocols() async {
+    final data = await _get('/vpn/protocols', authenticated: true);
+    final raw = data['protocols'];
+    if (raw is List) {
+      return raw
+          .map((e) => VpnProtocol.fromString(e.toString()))
+          .toList();
+    }
+    return [VpnProtocol.wireguard];
   }
 
   Future<void> revokeVpn() async {
@@ -162,20 +189,31 @@ class ApiClient {
     String path, {
     Map<String, dynamic>? body,
     required bool authenticated,
+    String? idempotencyKey,
   }) async {
     final response = await _httpClient.post(
       Uri.parse('$_apiRoot$path'),
-      headers: _headers(authenticated: authenticated),
+      headers: _headers(
+        authenticated: authenticated,
+        idempotencyKey: idempotencyKey,
+      ),
       body: body == null ? null : jsonEncode(body),
     );
     return _parseResponse(response);
   }
 
-  Map<String, String> _headers({required bool authenticated}) {
+  Map<String, String> _headers({
+    required bool authenticated,
+    String? idempotencyKey,
+  }) {
     final headers = <String, String>{
       'Accept': 'application/json',
       'Content-Type': 'application/json',
     };
+
+    if (idempotencyKey != null && idempotencyKey.isNotEmpty) {
+      headers['Idempotency-Key'] = idempotencyKey;
+    }
 
     if (authenticated) {
       final token = bearerToken;

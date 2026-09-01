@@ -17,11 +17,14 @@ var (
 )
 
 type AddPeerRequest struct {
-	NodeID     string   `json:"node_id"`
-	PeerID     string   `json:"peer_id"`
-	PublicKey  string   `json:"public_key"`
-	AssignedIP string   `json:"assigned_ip"`
-	AllowedIPs []string `json:"allowed_ips"`
+	NodeID        string            `json:"node_id"`
+	PeerID        string            `json:"peer_id"`
+	Protocol      string            `json:"protocol"`
+	PublicKey     string            `json:"public_key"`
+	AssignedIP    string            `json:"assigned_ip"`
+	AllowedIPs    []string          `json:"allowed_ips"`
+	ClientUUID    string            `json:"client_uuid,omitempty"`
+	ProtocolOpts  map[string]any    `json:"protocol_opts,omitempty"`
 }
 
 type RemovePeerRequest struct {

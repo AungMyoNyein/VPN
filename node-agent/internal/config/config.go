@@ -27,6 +27,9 @@ type Config struct {
 	ServerKeyPath   string `json:"server_key_path"`
 	ClientCAOrgUnit string `json:"client_ca_org_unit"`
 
+	VlessStorePath string `json:"vless_store_path"`
+	VlessEnabled   bool   `json:"vless_enabled"`
+
 	// Operational
 	LogLevel string `json:"log_level"`
 	TestMode bool   `json:"test_mode"`
@@ -69,6 +72,8 @@ func Load() Config {
 		ServerKeyPath:           getEnv("AGENT_SERVER_KEY_PATH", ""),
 		ClientCAOrgUnit:         getEnv("AGENT_CLIENT_ORG_UNIT", ""),
 		LogLevel:                getEnv("AGENT_LOG_LEVEL", "info"),
+		VlessStorePath:          getEnv("AGENT_VLESS_STORE_PATH", "/var/lib/vpn-platform/vless-peers.json"),
+		VlessEnabled:            getEnv("AGENT_VLESS_ENABLED", "true") == "true",
 		TestMode:                testMode,
 		Version:                 getEnv("AGENT_VERSION", "1.0.0"),
 	}

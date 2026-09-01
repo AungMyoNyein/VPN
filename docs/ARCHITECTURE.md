@@ -1,6 +1,6 @@
 # Architecture — Commercial VPN Platform
 
-**Phase:** 4 (Real WireGuard Node + Secure Node Agent)  
+**Phase:** 5 (Android Native WireGuard VPN Client)  
 **Status:** COMPLETE — Real Node Agent, RemoteNodeAdapter, mTLS, and nftables integration active  
 **Last updated:** 2026-08-28
 

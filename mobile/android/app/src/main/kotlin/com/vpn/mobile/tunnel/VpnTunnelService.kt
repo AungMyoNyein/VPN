@@ -16,28 +16,16 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
-import android.os.ParcelFileDescriptor
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.vpn.mobile.MainActivity
-import com.wireguard.android.backend.GoBackend
-import com.wireguard.android.backend.Tunnel
-import com.wireguard.config.Config
-import com.wireguard.config.InetAddresses
-import com.wireguard.config.InetEndpoint
-import com.wireguard.config.InetNetwork
-import com.wireguard.config.Interface
-import com.wireguard.config.Peer
-import com.wireguard.crypto.Key
-import com.wireguard.crypto.KeyPair
-import java.io.ByteArrayInputStream
-import java.net.InetAddress
-import java.util.concurrent.Executors
-import java.util.concurrent.ScheduledExecutorService
-import java.util.concurrent.TimeUnit
+import com.vpn.mobile.tunnel.engine.EngineListener
+import com.vpn.mobile.tunnel.engine.VlessEngine
+import com.vpn.mobile.tunnel.engine.VpnEngine
+import com.vpn.mobile.tunnel.engine.WireGuardEngine
 import java.util.concurrent.atomic.AtomicReference
 
-class VpnTunnelService : VpnService() {
+class VpnTunnelService : VpnService(), EngineListener {
 
     companion object {
         const val TAG = "VpnTunnelService"
@@ -104,18 +92,14 @@ class VpnTunnelService : VpnService() {
     }
 
     private val binder = LocalBinder()
-    private var backend: GoBackend? = null
-    private var activeTunnel: WireGuardTunnelInstance? = null
-    private var activeConfig: TunnelConfig? = null
+    private var activeEngine: VpnEngine? = null
+    private var activeConfig: SessionConfig? = null
     private var connectivityManager: ConnectivityManager? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
-    private var statsExecutor: ScheduledExecutorService? = null
-    private var connectedSinceEpochMs: Long = 0L
 
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
-        backend = GoBackend(applicationContext)
         connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
     }
 
@@ -125,128 +109,73 @@ class VpnTunnelService : VpnService() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val action = intent?.action
-        when (action) {
+        when (intent?.action) {
             ACTION_CONNECT -> {
                 val configMap = intent.getSerializableExtra(EXTRA_CONFIG) as? HashMap<*, *>
                 if (configMap != null) {
                     @Suppress("UNCHECKED_CAST")
-                    val parsedConfig = TunnelConfig.fromMap(configMap as Map<String, Any?>)
-                    startTunnel(parsedConfig)
+                    startTunnel(SessionConfig.fromMap(configMap as Map<String, Any?>))
                 }
             }
-            ACTION_DISCONNECT -> {
-                stopTunnel()
-            }
+            ACTION_DISCONNECT -> stopTunnel()
         }
         return START_NOT_STICKY
     }
 
-    fun startTunnel(config: TunnelConfig) {
+    fun startTunnel(config: SessionConfig) {
         try {
-            config.validate()
+            when (config) {
+                is SessionConfig.WireGuard -> config.config.validate()
+                is SessionConfig.Vless -> config.config.validate()
+            }
         } catch (e: Exception) {
-            notifyState(NativeTunnelState.ERROR, NativeTunnelErrorCode.INVALID_CONFIG, e.message)
+            val code = if (config is SessionConfig.Vless) {
+                NativeTunnelErrorCode.VLESS_CONFIG_INVALID
+            } else {
+                NativeTunnelErrorCode.INVALID_CONFIG
+            }
+            notifyState(NativeTunnelState.ERROR, code, e.message)
             return
         }
 
         activeConfig = config
         notifyState(NativeTunnelState.CONNECTING)
-        startForeground(NOTIFICATION_ID, buildNotification("Connecting to ${config.serverEndpoint}…"))
+        val label = config.locationLabel.ifBlank { config.protocolLabel }
+        startForeground(NOTIFICATION_ID, buildNotification("Connecting…", label, config.protocolLabel, false))
 
-        Executors.newSingleThreadExecutor().execute {
-            try {
-                // Build WireGuard library Config
-                val wgInterfaceBuilder = Interface.Builder()
-                val privateKeyObj = Key.fromBase64(config.privateKey)
-                wgInterfaceBuilder.parsePrivateKey(config.privateKey)
-
-                // IPv4 Address
-                val clientAddressNet = InetNetwork.parse(config.clientAddress)
-                wgInterfaceBuilder.addAddress(clientAddressNet)
-
-                // DNS
-                for (dns in config.dnsServers) {
-                    try {
-                        wgInterfaceBuilder.addDnsServer(InetAddresses.parse(dns))
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Failed parsing DNS server: $dns", e)
-                    }
-                }
-
-                // MTU
-                wgInterfaceBuilder.setMtu(config.mtu)
-
-                // Allowed/Blocked Applications if configured
-                if (config.allowedApplications.isNotEmpty()) {
-                    for (app in config.allowedApplications) {
-                        wgInterfaceBuilder.includeApplication(app)
-                    }
-                } else if (config.blockedApplications.isNotEmpty()) {
-                    for (app in config.blockedApplications) {
-                        wgInterfaceBuilder.excludeApplication(app)
-                    }
-                }
-
-                val wgPeerBuilder = Peer.Builder()
-                wgPeerBuilder.parsePublicKey(config.serverPublicKey)
-                wgPeerBuilder.parseEndpoint(config.serverEndpoint)
-                wgPeerBuilder.setPersistentKeepalive(config.persistentKeepalive)
-
-                // Allowed IPs (Strict IPv4 full tunnel 0.0.0.0/0)
-                for (allowedIp in config.allowedIps) {
-                    try {
-                        wgPeerBuilder.addAllowedIp(InetNetwork.parse(allowedIp))
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Failed parsing allowed IP: $allowedIp", e)
-                    }
-                }
-
-                val wgConfig = Config.Builder()
-                    .setInterface(wgInterfaceBuilder.build())
-                    .addPeer(wgPeerBuilder.build())
-                    .build()
-
-                val tunnelInstance = WireGuardTunnelInstance(config.peerId)
-                activeTunnel = tunnelInstance
-
-                backend?.setState(tunnelInstance, Tunnel.State.UP, wgConfig)
-
-                connectedSinceEpochMs = System.currentTimeMillis()
-                notifyState(NativeTunnelState.CONNECTED)
-                updateNotification("Connected to ${config.serverEndpoint}")
-                registerNetworkCallback()
-                startStatisticsPolling(tunnelInstance)
-
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to bring up WireGuard tunnel", e)
-                notifyState(NativeTunnelState.ERROR, NativeTunnelErrorCode.TUNNEL_START_FAILED, e.message)
-                stopForeground(STOP_FOREGROUND_REMOVE)
-            }
+        activeEngine?.stop()
+        activeEngine = when (config) {
+            is SessionConfig.WireGuard -> WireGuardEngine()
+            is SessionConfig.Vless -> VlessEngine()
         }
+        activeEngine?.start(this, config, this)
+    }
+
+    override fun onEngineReady(config: SessionConfig) {
+        notifyState(NativeTunnelState.CONNECTED)
+        val label = config.locationLabel.ifBlank { config.protocolLabel }
+        updateNotification(buildNotification("VPN Protected", label, config.protocolLabel, true))
+        registerNetworkCallback()
+    }
+
+    override fun onEngineFailed(code: String, message: String) {
+        notifyState(NativeTunnelState.ERROR, code, message)
+        stopTunnel()
+    }
+
+    override fun onStatistics(stats: TunnelStatistics) {
+        notifyStatistics(stats)
     }
 
     fun stopTunnel() {
         notifyState(NativeTunnelState.DISCONNECTING)
         unregisterNetworkCallback()
-        stopStatisticsPolling()
-
-        Executors.newSingleThreadExecutor().execute {
-            try {
-                activeTunnel?.let { tunnel ->
-                    backend?.setState(tunnel, Tunnel.State.DOWN, null)
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Error shutting down backend", e)
-            } finally {
-                activeTunnel = null
-                activeConfig = null
-                connectedSinceEpochMs = 0L
-                notifyState(NativeTunnelState.DISCONNECTED)
-                stopForeground(STOP_FOREGROUND_REMOVE)
-                stopSelf()
-            }
-        }
+        activeEngine?.stop()
+        activeEngine = null
+        activeConfig = null
+        notifyState(NativeTunnelState.DISCONNECTED)
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
     }
 
     private fun registerNetworkCallback() {
@@ -269,7 +198,12 @@ class VpnTunnelService : VpnService() {
                 if (currentStateRef.get() == NativeTunnelState.CONNECTED) {
                     Log.i(TAG, "Underlying network lost, entering RECONNECTING…")
                     notifyState(NativeTunnelState.RECONNECTING)
-                    updateNotification("Reconnecting…")
+                    activeConfig?.let { cfg ->
+                        val label = cfg.locationLabel.ifBlank { cfg.protocolLabel }
+                        updateNotification(
+                            buildNotification("Reconnecting…", label, cfg.protocolLabel, false)
+                        )
+                    }
                 }
             }
         }
@@ -293,48 +227,14 @@ class VpnTunnelService : VpnService() {
         }
     }
 
-    private fun startStatisticsPolling(tunnel: WireGuardTunnelInstance) {
-        stopStatisticsPolling()
-        statsExecutor = Executors.newSingleThreadScheduledExecutor()
-        statsExecutor?.scheduleAtFixedRate({
-            try {
-                val stats = backend?.getStatistics(tunnel)
-                val rx = stats?.totalRx() ?: 0L
-                val tx = stats?.totalTx() ?: 0L
-                val latestHandshake = try {
-                    val peerKey = stats?.peers()?.firstOrNull()
-                    if (peerKey != null) {
-                        stats.peer(peerKey)?.latestHandshakeEpochMillis() ?: 0L
-                    } else 0L
-                } catch (e: Throwable) {
-                    0L
-                }
-
-                val statsModel = TunnelStatistics(
-                    rxBytes = rx,
-                    txBytes = tx,
-                    latestHandshakeEpochMs = latestHandshake,
-                    connectedSinceEpochMs = connectedSinceEpochMs
-                )
-                notifyStatistics(statsModel)
-            } catch (e: Exception) {
-                // Ignore transient stat polling errors
-            }
-        }, 1, 2, TimeUnit.SECONDS)
-    }
-
-    private fun stopStatisticsPolling() {
-        statsExecutor?.shutdownNow()
-        statsExecutor = null
-    }
-
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val name = "VPN Service"
-            val descriptionText = "Shows active WireGuard VPN tunnel status"
-            val importance = NotificationManager.IMPORTANCE_LOW
-            val channel = NotificationChannel(NOTIFICATION_CHANNEL_ID, name, importance).apply {
-                description = descriptionText
+            val channel = NotificationChannel(
+                NOTIFICATION_CHANNEL_ID,
+                "VPN Service",
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "ZenTunnel VPN connection status"
                 setShowBadge(false)
             }
             val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -342,7 +242,16 @@ class VpnTunnelService : VpnService() {
         }
     }
 
-    private fun buildNotification(statusText: String): Notification {
+    private fun buildNotification(
+        statusText: String,
+        locationLabel: String,
+        protocolLabel: String,
+        protected: Boolean
+    ): Notification {
+        val subtitle = listOf(locationLabel, protocolLabel)
+            .filter { it.isNotBlank() }
+            .joinToString(" • ")
+
         val openAppIntent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
@@ -363,9 +272,15 @@ class VpnTunnelService : VpnService() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
+        val title = if (protected) "ZenTunnel — VPN Protected" else "ZenTunnel"
+
         return NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
-            .setContentTitle("VPN Secure Tunnel")
-            .setContentText(statusText)
+            .setContentTitle(title)
+            .setContentText(if (subtitle.isNotBlank()) "$statusText\n$subtitle" else statusText)
+            .setStyle(
+                NotificationCompat.BigTextStyle()
+                    .bigText(if (subtitle.isNotBlank()) "$statusText\n$subtitle" else statusText)
+            )
             .setSmallIcon(android.R.drawable.ic_lock_lock)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
@@ -374,21 +289,15 @@ class VpnTunnelService : VpnService() {
             .build()
     }
 
-    private fun updateNotification(statusText: String) {
+    private fun updateNotification(notification: Notification) {
         val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        notificationManager.notify(NOTIFICATION_ID, buildNotification(statusText))
+        notificationManager.notify(NOTIFICATION_ID, notification)
     }
 
     override fun onDestroy() {
         super.onDestroy()
         unregisterNetworkCallback()
-        stopStatisticsPolling()
-    }
-
-    private class WireGuardTunnelInstance(private val tunnelName: String) : Tunnel {
-        override fun getName(): String = tunnelName
-        override fun onStateChange(state: Tunnel.State) {
-            Log.d(TAG, "WireGuard tunnel $tunnelName state changed to: $state")
-        }
+        activeEngine?.stop()
+        activeEngine = null
     }
 }

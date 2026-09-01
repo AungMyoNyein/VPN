@@ -19,7 +19,8 @@ data class TunnelConfig(
     val mtu: Int = 1420,
     val allowLocalNetwork: Boolean = false,
     val blockedApplications: List<String> = emptyList(),
-    val allowedApplications: List<String> = emptyList()
+    val allowedApplications: List<String> = emptyList(),
+    val locationLabel: String = ""
 ) {
     companion object {
         fun fromMap(map: Map<String, Any?>): TunnelConfig {
@@ -35,6 +36,7 @@ data class TunnelConfig(
 
             @Suppress("UNCHECKED_CAST")
             val allowedIps = (map["allowedIps"] as? List<String>)?.map { it.trim() }
+                ?.filter { !it.contains(":") }
                 ?: listOf("0.0.0.0/0")
 
             val persistentKeepalive = (map["persistentKeepalive"] as? Number)?.toInt() ?: 25
@@ -46,6 +48,7 @@ data class TunnelConfig(
 
             @Suppress("UNCHECKED_CAST")
             val allowedApps = (map["allowedApplications"] as? List<String>) ?: emptyList()
+            val locationLabel = (map["locationLabel"] as? String)?.trim() ?: ""
 
             return TunnelConfig(
                 peerId = peerId,
@@ -59,7 +62,8 @@ data class TunnelConfig(
                 mtu = mtu,
                 allowLocalNetwork = allowLocalNetwork,
                 blockedApplications = blockedApps,
-                allowedApplications = allowedApps
+                allowedApplications = allowedApps,
+                locationLabel = locationLabel
             )
         }
     }

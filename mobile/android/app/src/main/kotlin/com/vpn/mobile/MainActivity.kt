@@ -9,9 +9,10 @@ import com.vpn.mobile.security.AndroidKeystoreSecureStorage
 import com.vpn.mobile.security.SecureKeyStorage
 import com.vpn.mobile.tunnel.NativeTunnelErrorCode
 import com.vpn.mobile.tunnel.NativeTunnelState
-import com.vpn.mobile.tunnel.TunnelConfig
+import com.vpn.mobile.tunnel.SessionConfig
 import com.vpn.mobile.tunnel.TunnelStatistics
 import com.vpn.mobile.tunnel.VpnTunnelService
+import com.wireguard.crypto.KeyPair
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
@@ -25,6 +26,7 @@ class MainActivity : FlutterActivity(), VpnTunnelService.TunnelStateListener {
         private const val EVENT_CHANNEL_STATE = "com.vpn.mobile/vpn_state_stream"
         private const val EVENT_CHANNEL_STATS = "com.vpn.mobile/vpn_stats_stream"
         private const val VPN_PREPARE_REQUEST_CODE = 2001
+        private const val PREFS_NAME = "vpn_app_preferences"
     }
 
     private var pendingMethodResult: MethodChannel.Result? = null
@@ -92,8 +94,11 @@ class MainActivity : FlutterActivity(), VpnTunnelService.TunnelStateListener {
                 }
 
                 try {
-                    val config = TunnelConfig.fromMap(map)
-                    config.validate()
+                    val config = SessionConfig.fromMap(map)
+                    when (config) {
+                        is SessionConfig.WireGuard -> config.config.validate()
+                        is SessionConfig.Vless -> config.config.validate()
+                    }
 
                     val intent = Intent(this, VpnTunnelService::class.java).apply {
                         action = VpnTunnelService.ACTION_CONNECT
@@ -149,6 +154,35 @@ class MainActivity : FlutterActivity(), VpnTunnelService.TunnelStateListener {
                 } catch (e: Exception) {
                     result.error(NativeTunnelErrorCode.KEYSTORE_ERROR, e.message, null)
                 }
+            }
+            "generateKeyPair" -> {
+                try {
+                    val keyPair = KeyPair()
+                    result.success(
+                        mapOf(
+                            "privateKey" to keyPair.privateKey.toBase64(),
+                            "publicKey" to keyPair.publicKey.toBase64()
+                        )
+                    )
+                } catch (e: Exception) {
+                    result.error(NativeTunnelErrorCode.KEYSTORE_ERROR, e.message, null)
+                }
+            }
+            "setPreference" -> {
+                val key = call.argument<String>("key") ?: ""
+                val value = call.argument<Boolean>("value") ?: false
+                getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    .edit()
+                    .putBoolean(key, value)
+                    .apply()
+                result.success(true)
+            }
+            "getPreference" -> {
+                val key = call.argument<String>("key") ?: ""
+                val defaultValue = call.argument<Boolean>("defaultValue") ?: false
+                val value = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    .getBoolean(key, defaultValue)
+                result.success(value)
             }
             else -> result.notImplemented()
         }

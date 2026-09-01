@@ -41,7 +41,8 @@ class ControlPlaneClient
     /**
      * Add a peer to a node via control-plane.
      *
-     * @param array<int, string> $allowedIps
+     * @param  array<int, string>  $allowedIps
+     * @param  array<string, mixed>  $protocolOptions
      * @return array<string, mixed>
      */
     public function addPeer(
@@ -50,16 +51,30 @@ class ControlPlaneClient
         string $publicKey,
         string $assignedIp,
         array $allowedIps = ['0.0.0.0/0', '::/0'],
-        ?string $requestId = null
+        ?string $requestId = null,
+        string $protocol = 'wireguard',
+        ?string $clientUuid = null,
+        array $protocolOptions = []
     ): array {
         try {
-            $response = $this->client($requestId)->post('/internal/v1/peers', [
+            $payload = [
                 'node_id' => $nodeId,
                 'peer_id' => $peerId,
+                'protocol' => $protocol,
                 'public_key' => $publicKey,
                 'assigned_ip' => $assignedIp,
                 'allowed_ips' => $allowedIps,
-            ]);
+            ];
+
+            if ($clientUuid !== null && $clientUuid !== '') {
+                $payload['client_uuid'] = $clientUuid;
+            }
+
+            if ($protocolOptions !== []) {
+                $payload['protocol_opts'] = $protocolOptions;
+            }
+
+            $response = $this->client($requestId)->post('/internal/v1/peers', $payload);
 
             if ($response->successful()) {
                 return $response->json();
@@ -85,10 +100,15 @@ class ControlPlaneClient
      *
      * @return array<string, mixed>
      */
-    public function removePeer(string $peerId, ?string $requestId = null): array
+    public function removePeer(string $peerId, ?string $nodeId = null, ?string $requestId = null): array
     {
         try {
-            $response = $this->client($requestId)->delete("/internal/v1/peers/{$peerId}");
+            $url = "/internal/v1/peers/{$peerId}";
+            if ($nodeId !== null && $nodeId !== '') {
+                $url .= '?node_id='.urlencode($nodeId);
+            }
+
+            $response = $this->client($requestId)->delete($url);
 
             if ($response->successful() || $response->status() === 404) {
                 return $response->json() ?? ['data' => ['removed' => true]];

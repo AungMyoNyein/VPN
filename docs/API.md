@@ -89,14 +89,29 @@ Both remain readable even when the subscription has expired.
 
 #### Provision Request
 
+**WireGuard (default):**
+
 ```json
 {
+  "protocol": "wireguard",
   "location_id": 1,
   "client_public_key": "jXpGt9enG8oV8lxX4vwNBi1czL89KqL8ImmWToKVHyv="
 }
 ```
 
-#### Provision Response (success)
+**VLESS:**
+
+```json
+{
+  "protocol": "vless",
+  "location_id": 1,
+  "client_uuid": "550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+`client_uuid` is optional for VLESS — the server generates one if omitted.
+
+#### Provision Response (WireGuard success)
 
 ```json
 {
@@ -122,6 +137,49 @@ Both remain readable even when the subscription has expired.
 ```
 
 Never includes SSH passwords, management IPs, or control-plane credentials.
+
+#### Provision Response (VLESS success)
+
+```json
+{
+  "data": {
+    "protocol": "vless",
+    "peer_id": "VLESS-PEER-001",
+    "uuid": "550e8400-e29b-41d4-a716-446655440000",
+    "dns": ["1.1.1.1", "1.0.0.1"],
+    "server": {
+      "id": 1,
+      "name": "Singapore 01",
+      "location": "Singapore",
+      "endpoint": "zentunnel.net:443",
+      "security": "tls",
+      "sni": "zentunnel.net",
+      "flow": "xtls-rprx-vision",
+      "fingerprint": "chrome",
+      "alpn": "h2,http/1.1"
+    },
+    "share_url": "vless://550e8400-e29b-41d4-a716-446655440000@zentunnel.net:443?..."
+  },
+  "meta": { "request_id": "..." }
+}
+```
+
+#### GET `/vpn/protocols`
+
+Returns supported protocols for the mobile client.
+
+```json
+{
+  "data": {
+    "protocols": ["wireguard", "vless"],
+    "default": "wireguard"
+  }
+}
+```
+
+#### GET `/vpn/recommended-server?protocol=vless`
+
+Query `protocol` is optional (`wireguard` default).
 
 ### Stable Error Codes
 

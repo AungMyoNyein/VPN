@@ -11,6 +11,7 @@ import (
 	"github.com/vpn-platform/node-agent/internal/auth"
 	"github.com/vpn-platform/node-agent/internal/config"
 	"github.com/vpn-platform/node-agent/internal/telemetry"
+	"github.com/vpn-platform/node-agent/internal/vless"
 	"github.com/vpn-platform/node-agent/internal/wireguard"
 )
 
@@ -19,12 +20,14 @@ var startTime = time.Now()
 type AddPeerRequest struct {
 	NodeID     string   `json:"node_id"`
 	PeerID     string   `json:"peer_id"`
+	Protocol   string   `json:"protocol"`
 	PublicKey  string   `json:"public_key"`
 	AssignedIP string   `json:"assigned_ip"`
 	AllowedIPs []string `json:"allowed_ips"`
+	ClientUUID string   `json:"client_uuid"`
 }
 
-func RegisterRoutes(mux *http.ServeMux, logger *slog.Logger, cfg config.Config, manager wireguard.Manager, metrics *telemetry.MetricsCollector) {
+func RegisterRoutes(mux *http.ServeMux, logger *slog.Logger, cfg config.Config, manager wireguard.Manager, vlessMgr *vless.Manager, metrics *telemetry.MetricsCollector) {
 	nodeValidation := auth.NodeIDValidationMiddleware(cfg.NodeID)
 
 	writeJSON := func(w http.ResponseWriter, status int, data any) {
@@ -94,8 +97,47 @@ func RegisterRoutes(mux *http.ServeMux, logger *slog.Logger, cfg config.Config, 
 			return
 		}
 
-		if req.PeerID == "" || req.PublicKey == "" || req.AssignedIP == "" {
-			writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "peer_id, public_key, and assigned_ip are required", reqID)
+		if req.PeerID == "" {
+			writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "peer_id is required", reqID)
+			return
+		}
+
+		protocol := strings.ToLower(strings.TrimSpace(req.Protocol))
+		if protocol == "" {
+			protocol = "wireguard"
+		}
+
+		if protocol == "vless" {
+			clientUUID := strings.TrimSpace(req.ClientUUID)
+			if clientUUID == "" {
+				clientUUID = strings.TrimSpace(req.PublicKey)
+			}
+			if clientUUID == "" || vlessMgr == nil {
+				writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "client_uuid is required for vless peers", reqID)
+				return
+			}
+			if err := vlessMgr.AddPeer(r.Context(), req.PeerID, clientUUID); err != nil {
+				logger.Error("failed to add vless peer", "error", err, "peer_id", req.PeerID, "request_id", reqID)
+				writeError(w, http.StatusInternalServerError, "VPN_PROVISIONING_FAILED", err.Error(), reqID)
+				return
+			}
+			logger.Info("peer added to vless", "peer_id", req.PeerID, "request_id", reqID)
+			writeJSON(w, http.StatusCreated, map[string]any{
+				"data": map[string]any{
+					"peer_id":     req.PeerID,
+					"client_uuid": clientUUID,
+					"protocol":    "vless",
+					"status":      "ACTIVE",
+				},
+				"meta": map[string]string{
+					"request_id": reqID,
+				},
+			})
+			return
+		}
+
+		if req.PublicKey == "" || req.AssignedIP == "" {
+			writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "public_key and assigned_ip are required for wireguard peers", reqID)
 			return
 		}
 
@@ -145,6 +187,18 @@ func RegisterRoutes(mux *http.ServeMux, logger *slog.Logger, cfg config.Config, 
 			return
 		}
 
+		if vlessMgr != nil {
+			vlessPeers, vErr := vlessMgr.ListPeers(r.Context())
+			if vErr == nil {
+				for _, p := range vlessPeers {
+					peers = append(peers, wireguard.PeerInfo{
+						PeerID:    p.PeerID,
+						PublicKey: p.ClientUUID,
+					})
+				}
+			}
+		}
+
 		writeJSON(w, http.StatusOK, map[string]any{
 			"data": peers,
 			"meta": map[string]any{
@@ -161,6 +215,19 @@ func RegisterRoutes(mux *http.ServeMux, logger *slog.Logger, cfg config.Config, 
 
 		peer, err := manager.GetPeer(r.Context(), peerID)
 		if err != nil {
+			if vlessMgr != nil {
+				if vPeer, vErr := vlessMgr.GetPeer(r.Context(), peerID); vErr == nil {
+					writeJSON(w, http.StatusOK, map[string]any{
+						"data": map[string]any{
+							"peer_id":     vPeer.PeerID,
+							"client_uuid": vPeer.ClientUUID,
+							"protocol":    "vless",
+						},
+						"meta": map[string]string{"request_id": reqID},
+					})
+					return
+				}
+			}
 			if errors.Is(err, wireguard.ErrPeerNotFound) {
 				writeError(w, http.StatusNotFound, "PEER_NOT_FOUND", "Peer not found", reqID)
 				return
@@ -214,6 +281,16 @@ func RegisterRoutes(mux *http.ServeMux, logger *slog.Logger, cfg config.Config, 
 		pubKey := r.URL.Query().Get("public_key")
 
 		if err := manager.RemovePeer(r.Context(), peerID, pubKey); err != nil {
+			if vlessMgr != nil {
+				if vErr := vlessMgr.RemovePeer(r.Context(), peerID); vErr == nil {
+					logger.Info("peer removed from vless", "peer_id", peerID, "request_id", reqID)
+					writeJSON(w, http.StatusOK, map[string]any{
+						"data": map[string]any{"peer_id": peerID, "removed": true},
+						"meta": map[string]string{"request_id": reqID},
+					})
+					return
+				}
+			}
 			logger.Error("failed to remove peer", "error", err, "peer_id", peerID, "request_id", reqID)
 			writeError(w, http.StatusInternalServerError, "REMOVE_PEER_FAILED", err.Error(), reqID)
 			return

@@ -30,15 +30,48 @@ func RegisterRoutes(mux *http.ServeMux, logger *slog.Logger, cfg config.Config, 
 			return
 		}
 
-		if req.NodeID == "" || req.PeerID == "" || req.PublicKey == "" || req.AssignedIP == "" {
+		if req.NodeID == "" || req.PeerID == "" {
 			writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
 				"error": map[string]string{
 					"code":       "VALIDATION_ERROR",
-					"message":    "node_id, peer_id, public_key, and assigned_ip are required",
+					"message":    "node_id and peer_id are required",
 					"request_id": reqID,
 				},
 			})
 			return
+		}
+
+		protocol := strings.ToLower(strings.TrimSpace(req.Protocol))
+		if protocol == "" {
+			protocol = "wireguard"
+			req.Protocol = protocol
+		}
+
+		if protocol == "vless" {
+			if req.ClientUUID == "" {
+				req.ClientUUID = req.PublicKey
+			}
+			if req.ClientUUID == "" {
+				writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
+					"error": map[string]string{
+						"code":       "VALIDATION_ERROR",
+						"message":    "client_uuid is required for vless peers",
+						"request_id": reqID,
+					},
+				})
+				return
+			}
+		} else {
+			if req.PublicKey == "" || req.AssignedIP == "" {
+				writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
+					"error": map[string]string{
+						"code":       "VALIDATION_ERROR",
+						"message":    "public_key and assigned_ip are required for wireguard peers",
+						"request_id": reqID,
+					},
+				})
+				return
+			}
 		}
 
 		if err := nodeAdapter.AddPeer(r.Context(), req); err != nil {
@@ -324,7 +357,12 @@ func RegisterRoutes(mux *http.ServeMux, logger *slog.Logger, cfg config.Config, 
 		}
 
 		if multi, ok := nodeAdapter.(*adapter.MultiNodeAdapter); ok {
-			multi.SetNodeType(req.NodeID, req.AdapterType)
+			multi.RegisterRemoteNode(adapter.RemoteNodeConfig{
+				NodeID:      req.NodeID,
+				Endpoint:    req.Endpoint,
+				AdapterType: req.AdapterType,
+				MTLSEnabled: req.MTLSEnabled,
+			})
 		}
 
 		logger.Info("node registered", "node_id", req.NodeID, "adapter_type", req.AdapterType, "request_id", reqID)

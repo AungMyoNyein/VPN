@@ -14,6 +14,7 @@ import (
 	"github.com/vpn-platform/node-agent/internal/config"
 	"github.com/vpn-platform/node-agent/internal/network"
 	"github.com/vpn-platform/node-agent/internal/telemetry"
+	"github.com/vpn-platform/node-agent/internal/vless"
 	"github.com/vpn-platform/node-agent/internal/wireguard"
 )
 
@@ -61,9 +62,17 @@ func main() {
 	}
 	nftCancel()
 
+	var vlessMgr *vless.Manager
+	if cfg.VlessEnabled {
+		vlessMgr, err = vless.NewManager(cfg.VlessStorePath)
+		if err != nil {
+			logger.Warn("could not initialize vless manager", "error", err)
+		}
+	}
+
 	metrics := telemetry.NewMetricsCollector(manager)
 	mux := http.NewServeMux()
-	api.RegisterRoutes(mux, logger, cfg, manager, metrics)
+	api.RegisterRoutes(mux, logger, cfg, manager, vlessMgr, metrics)
 
 	handler := api.RequestLoggerMiddleware(logger, metrics)(mux)
 

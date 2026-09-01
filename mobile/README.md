@@ -1,6 +1,6 @@
 # VPN Mobile (Flutter)
 
-Phase 2: activation + device credential auth. Native WireGuard tunnels arrive in Phases 4 (Android) and 5 (iOS).
+Phase 5: Android native WireGuard VPN tunnel. iOS NetworkExtension arrives in Phase 6.
 
 ## Structure
 
@@ -8,21 +8,23 @@ Phase 2: activation + device credential auth. Native WireGuard tunnels arrive in
 lib/
   main.dart
   app.dart
-  core/          # API client, secure store, config, models
-  state/         # App auth + VPN connection state machine
-  features/      # splash, auth, home, locations, account, settings
-android/         # Placeholder — VpnService in Phase 4
-ios/             # Placeholder — NetworkExtension in Phase 5
+  core/          # API client, secure store, native VPN bridge, keys
+  state/         # App auth + VpnManager connection orchestration
+  features/      # splash, auth, home, locations, account, settings, diagnostics
+  widgets/       # connection control, timer
+android/         # VpnService + WireGuard GoBackend + platform channels
+ios/             # Placeholder — Phase 6
 test/
 ```
 
-## Phase 2 behavior
+## Phase 5 behavior
 
-- **Activation:** Customer ID + Activation Key → `POST /api/v1/activate` → secure credential stored locally.
-- **Bootstrap:** Splash reads credential → refresh/account → Home, or Activation when missing/revoked.
-- **Protected API:** Bearer device credential on `/account`, `/subscription`, `/device`, `/device/refresh`, `/device/deactivate`.
-- **Home:** Shows “VPN Access Ready” with plan/expiry; Connect is disabled until a later phase.
-- **Settings:** “Deactivate this device” revokes remotely and clears local credential.
+- **Activation:** Customer ID + Activation Key → secure device credential (Phase 2)
+- **Connect:** Provisions peer via API → Android VPN permission → WireGuard tunnel
+- **Disconnect:** Stops tunnel only — peer remains provisioned for reconnect
+- **Locations:** Smart Location or manual country selection
+- **Keys:** WireGuard private key in Android Keystore; never sent to backend
+- **State:** Native `VpnTunnelService` is authoritative; Flutter observes via EventChannel
 
 ## API base URL
 
@@ -37,7 +39,7 @@ Override:
 flutter run --dart-define=API_BASE_URL=http://192.168.1.10:8000
 ```
 
-## Run
+## Run (Android)
 
 ```bash
 cd mobile
@@ -47,9 +49,12 @@ flutter test
 flutter run
 ```
 
-## Connection states (ADR-aligned, Phase 3+)
+Requires a real Android device or emulator with VPN capability for tunnel validation.
 
-`DISCONNECTED` → `PREPARING` → `AUTHORIZING` → `PROVISIONING` → `CONNECTING` → `CONNECTED`
+## Connection states
+
+`DISCONNECTED` → `PREPARING` → `AUTHORIZING` → `PROVISIONING` → `REQUESTING_PERMISSION` → `CONNECTING` → `CONNECTED`
+
 Also: `RECONNECTING`, `DISCONNECTING`, `ERROR`
 
-Do not use a single `isConnected` boolean as the source of truth.
+See [docs/ANDROID_VPN.md](../docs/ANDROID_VPN.md) for native architecture details.

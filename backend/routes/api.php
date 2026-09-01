@@ -29,6 +29,7 @@ Route::prefix('v1')->group(function (): void {
 
         // Phase 3 VPN endpoints
         Route::get('/vpn/locations', [VpnController::class, 'locations']);
+        Route::get('/vpn/protocols', [VpnController::class, 'protocols']);
         Route::get('/vpn/recommended-server', [VpnController::class, 'recommendedServer']);
         Route::get('/vpn/status', [VpnController::class, 'status']);
         Route::post('/vpn/provision', [VpnController::class, 'provision']);

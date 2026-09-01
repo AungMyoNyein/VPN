@@ -5,6 +5,7 @@ namespace App\Services\Vpn;
 use App\Enums\PeerStatus;
 use App\Enums\ProvisioningOperationStatus;
 use App\Enums\ProvisioningOperationType;
+use App\Enums\VpnProtocol;
 use App\Models\AdminUser;
 use App\Models\Device;
 use App\Models\ProvisioningOperation;
@@ -29,9 +30,6 @@ class VpnProvisioningService
         private readonly AuditLogger $auditLogger,
     ) {}
 
-    /**
-     * Public key validator for WireGuard (32-byte base64 encoded string).
-     */
     public function isValidPublicKey(string $key): bool
     {
         $trimmed = trim($key);
@@ -44,14 +42,11 @@ class VpnProvisioningService
     }
 
     /**
-     * Provision a VPN peer for an authenticated device.
-     *
-     * @param array{location_id?: int|null, client_public_key: string} $payload
+     * @param  array{location_id?: int|null, protocol?: string|null, client_public_key?: string|null, client_uuid?: string|null}  $payload
      * @return array{ok: bool, code?: string, message?: string, status?: int, data?: array<string, mixed>}
      */
     public function provision(Device $device, array $payload, ?string $idempotencyKey = null): array
     {
-        // 1. Authorization & Entitlement check
         $authResult = $this->authorizer->authorize($device);
         if (! $authResult['allowed']) {
             return [
@@ -62,22 +57,18 @@ class VpnProvisioningService
             ];
         }
 
-        // 2. Validate client public key format
-        $clientPublicKey = trim($payload['client_public_key'] ?? '');
-        if (! $this->isValidPublicKey($clientPublicKey)) {
-            return [
-                'ok' => false,
-                'code' => 'INVALID_PUBLIC_KEY',
-                'message' => 'The provided WireGuard public key is invalid.',
-                'status' => 422,
-            ];
-        }
-
+        $protocol = $this->resolveProtocol($payload['protocol'] ?? null);
         $locationId = isset($payload['location_id']) && $payload['location_id'] !== null
             ? (int) $payload['location_id']
             : null;
 
-        // 3. Check Idempotency Key
+        $identity = $this->resolveClientIdentity($protocol, $payload);
+        if (! $identity['ok']) {
+            return $identity;
+        }
+
+        $clientIdentity = $identity['identity'];
+
         if ($idempotencyKey !== null && $idempotencyKey !== '') {
             $existingOp = ProvisioningOperation::query()
                 ->where('idempotency_key', $idempotencyKey)
@@ -92,63 +83,67 @@ class VpnProvisioningService
             }
         }
 
-        // 4. One active peer per device invariant: if active peer exists, revoke it first
         $existingActivePeer = VpnPeer::query()
             ->where('device_id', $device->id)
             ->whereIn('status', [PeerStatus::Pending, PeerStatus::Active, PeerStatus::Revoking])
             ->first();
 
         if ($existingActivePeer !== null) {
-            // If it's already active with the identical public key, same node, and no location change requested, return idempotent config
+            $sameIdentity = $protocol === VpnProtocol::Wireguard
+                ? $existingActivePeer->public_key === $clientIdentity
+                : ($existingActivePeer->client_identity ?? $existingActivePeer->public_key) === $clientIdentity;
+
             if ($existingActivePeer->status === PeerStatus::Active
-                && $existingActivePeer->public_key === $clientPublicKey
+                && $sameIdentity
+                && $existingActivePeer->protocol() === $protocol
                 && ($locationId === null || $existingActivePeer->node?->location_id === $locationId)) {
                 $node = $existingActivePeer->node;
                 if ($node !== null) {
-                    $response = $this->buildTunnelResponse($existingActivePeer, $node);
-                    return ['ok' => true, 'data' => $response];
+                    return [
+                        'ok' => true,
+                        'data' => $this->buildTunnelResponse($existingActivePeer, $node),
+                    ];
                 }
             }
 
-            // Otherwise, revoke the prior peer cleanly before provisioning new one
             $this->revoke($device, $existingActivePeer);
         }
 
-        // 5. Select eligible VPN Node
-        $selectedNode = $this->nodeSelectionService->selectNode($locationId, $device->customer);
+        $selectedNode = $this->nodeSelectionService->selectNode($locationId, $device->customer, $protocol);
         if ($selectedNode === null) {
             return [
                 'ok' => false,
                 'code' => 'NO_VPN_NODE_AVAILABLE',
-                'message' => 'No eligible VPN server is available for the requested location.',
+                'message' => 'No eligible VPN server is available for the requested location and protocol.',
                 'status' => 503,
             ];
         }
 
-        // 6. Select IP Pool on the node
-        $ipPool = $selectedNode->ipPools()->where('active', true)->first();
-        if ($ipPool === null) {
-            return [
-                'ok' => false,
-                'code' => 'IP_POOL_EXHAUSTED',
-                'message' => 'No active IP pool available on the selected VPN server.',
-                'status' => 503,
-            ];
+        $ipPool = null;
+        if ($protocol->requiresIpAllocation()) {
+            $ipPool = $selectedNode->ipPools()->where('active', true)->first();
+            if ($ipPool === null) {
+                return [
+                    'ok' => false,
+                    'code' => 'IP_POOL_EXHAUSTED',
+                    'message' => 'No active IP pool available on the selected VPN server.',
+                    'status' => 503,
+                ];
+            }
         }
 
-        // 7. Transactional DB Setup (Allocate IP, create PENDING peer, create operation)
         $idempKey = $idempotencyKey ?: (string) Str::uuid();
-        $peerCode = 'WG-PEER-' . strtoupper(Str::random(12));
+        $peerCode = $protocol->peerCodePrefix().strtoupper(Str::random(12));
 
         $peer = null;
         $operation = null;
-        $allocation = null;
 
         try {
-            [$peer, $allocation, $operation] = DB::transaction(function () use (
+            [$peer, $operation] = DB::transaction(function () use (
                 $device,
                 $selectedNode,
-                $clientPublicKey,
+                $protocol,
+                $clientIdentity,
                 $ipPool,
                 $idempKey,
                 $peerCode
@@ -157,16 +152,17 @@ class VpnProvisioningService
                     'peer_code' => $peerCode,
                     'device_id' => $device->id,
                     'node_id' => $selectedNode->id,
-                    'public_key' => $clientPublicKey,
-                    'assigned_ip' => '0.0.0.0', // Updated on allocation
+                    'protocol' => $protocol->value,
+                    'public_key' => $clientIdentity,
+                    'client_identity' => $protocol === VpnProtocol::Vless ? $clientIdentity : null,
+                    'assigned_ip' => $protocol->requiresIpAllocation() ? '0.0.0.0' : '0.0.0.0',
                     'status' => PeerStatus::Pending,
                 ]);
 
-                $allocation = $this->ipamService->allocate($ipPool, $device, $peer);
-
-                $peer->update([
-                    'assigned_ip' => $allocation->ip_address,
-                ]);
+                if ($ipPool !== null) {
+                    $allocation = $this->ipamService->allocate($ipPool, $device, $peer);
+                    $peer->update(['assigned_ip' => $allocation->ip_address]);
+                }
 
                 $operation = ProvisioningOperation::create([
                     'idempotency_key' => $idempKey,
@@ -177,11 +173,12 @@ class VpnProvisioningService
                     'attempt_count' => 1,
                 ]);
 
-                return [$peer, $allocation, $operation];
+                return [$peer, $operation];
             });
         } catch (Exception $e) {
             Log::error('VPN Provisioning DB transaction failed', [
                 'device_id' => $device->id,
+                'protocol' => $protocol->value,
                 'error' => $e->getMessage(),
             ]);
 
@@ -197,22 +194,24 @@ class VpnProvisioningService
             return [
                 'ok' => false,
                 'code' => 'VPN_PROVISIONING_FAILED',
-                'message' => 'Failed to initialize VPN provisioning: ' . $e->getMessage(),
+                'message' => 'Failed to initialize VPN provisioning: '.$e->getMessage(),
                 'status' => 500,
             ];
         }
 
-        // 8. Call Control Plane to Add Peer to the node
         try {
             $this->controlPlaneClient->addPeer(
                 (string) $selectedNode->id,
                 $peer->peer_code,
-                $clientPublicKey,
+                $peer->public_key,
                 $peer->assigned_ip,
-                config('vpn.allowed_ips', ['0.0.0.0/0'])
+                config('vpn.allowed_ips', ['0.0.0.0/0']),
+                null,
+                $protocol->value,
+                $protocol === VpnProtocol::Vless ? $clientIdentity : null,
+                $protocol === VpnProtocol::Vless ? $selectedNode->vlessConfig() : []
             );
 
-            // Mutation succeeded -> peer becomes ACTIVE
             $peer->update([
                 'status' => PeerStatus::Active,
                 'provisioned_at' => now(),
@@ -232,6 +231,7 @@ class VpnProvisioningService
                 before: null,
                 after: [
                     'peer_code' => $peer->peer_code,
+                    'protocol' => $protocol->value,
                     'node' => $selectedNode->name,
                     'assigned_ip' => $peer->assigned_ip,
                 ]
@@ -244,6 +244,7 @@ class VpnProvisioningService
         } catch (Exception $e) {
             Log::error('Control plane AddPeer failed', [
                 'peer_code' => $peer->peer_code,
+                'protocol' => $protocol->value,
                 'node_id' => $selectedNode->id,
                 'error' => $e->getMessage(),
             ]);
@@ -265,6 +266,7 @@ class VpnProvisioningService
                 before: null,
                 after: [
                     'peer_code' => $peer->peer_code,
+                    'protocol' => $protocol->value,
                     'error' => $e->getMessage(),
                 ]
             );
@@ -279,9 +281,7 @@ class VpnProvisioningService
     }
 
     /**
-     * Revoke a VPN peer for a device.
-     *
-     * @return array{ok: bool, code?: string, message?: string, data?: array<string, mixed>}
+     * @return array{ok: bool, code?: string, message?: string, status?: int, data?: array<string, mixed>}
      */
     public function revoke(Device $device, ?VpnPeer $peer = null, ?AdminUser $actor = null, ?string $reason = null): array
     {
@@ -312,7 +312,10 @@ class VpnProvisioningService
         ]);
 
         try {
-            $this->controlPlaneClient->removePeer($targetPeer->peer_code);
+            $this->controlPlaneClient->removePeer(
+                $targetPeer->peer_code,
+                (string) $targetPeer->node_id
+            );
 
             $targetPeer->update([
                 'status' => PeerStatus::Revoked,
@@ -320,7 +323,9 @@ class VpnProvisioningService
                 'failure_reason' => $reason,
             ]);
 
-            $this->ipamService->releaseForPeer($targetPeer);
+            if ($targetPeer->protocol()->requiresIpAllocation()) {
+                $this->ipamService->releaseForPeer($targetPeer);
+            }
 
             $operation->update([
                 'status' => ProvisioningOperationStatus::Succeeded,
@@ -340,6 +345,7 @@ class VpnProvisioningService
                 'data' => [
                     'revoked' => true,
                     'peer_id' => $targetPeer->peer_code,
+                    'protocol' => $targetPeer->protocol()->value,
                 ],
             ];
         } catch (Exception $e) {
@@ -357,36 +363,151 @@ class VpnProvisioningService
                 'last_error' => $e->getMessage(),
             ]);
 
-            // IP remains allocated until reconciliation cleanly confirms removal
             return [
                 'ok' => false,
                 'code' => 'VPN_REVOCATION_FAILED',
-                'message' => 'Failed to remove peer from node: ' . $e->getMessage(),
+                'message' => 'Failed to remove peer from node: '.$e->getMessage(),
             ];
         }
     }
 
     /**
-     * Build customer-safe tunnel configuration response.
-     *
      * @return array<string, mixed>
      */
     public function buildTunnelResponse(VpnPeer $peer, VpnNode $node): array
     {
+        if ($peer->protocol() === VpnProtocol::Vless) {
+            return $this->buildVlessResponse($peer, $node);
+        }
+
         return [
+            'protocol' => VpnProtocol::Wireguard->value,
             'peer_id' => $peer->peer_code,
-            'address' => $peer->assigned_ip . '/32',
+            'address' => $peer->assigned_ip.'/32',
             'dns' => config('vpn.dns', ['1.1.1.1', '1.0.0.1']),
             'server' => [
                 'id' => $node->id,
                 'name' => $node->name,
                 'location' => $node->location?->display_name ?? 'Default',
-                'endpoint' => $node->public_endpoint . ':' . $node->vpn_port,
+                'endpoint' => $node->public_endpoint.':'.$node->vpn_port,
                 'public_key' => $node->public_key ?? '',
             ],
             'allowed_ips' => config('vpn.allowed_ips', ['0.0.0.0/0']),
             'persistent_keepalive' => (int) config('vpn.persistent_keepalive', 25),
             'mtu' => (int) config('vpn.mtu', 1420),
         ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function buildVlessResponse(VpnPeer $peer, VpnNode $node): array
+    {
+        $vless = $node->vlessConfig();
+        $uuid = $peer->client_identity ?? $peer->public_key;
+        $host = $node->public_endpoint;
+        $port = $node->vlessPort();
+        $security = $vless['security'] ?? 'tls';
+        $sni = $vless['sni'] ?? $host;
+        $flow = $vless['flow'] ?? null;
+        $fingerprint = $vless['fingerprint'] ?? 'chrome';
+
+        $params = [
+            'encryption' => 'none',
+            'security' => $security,
+            'type' => 'tcp',
+            'sni' => $sni,
+        ];
+        if ($flow) {
+            $params['flow'] = $flow;
+        }
+        if ($fingerprint) {
+            $params['fp'] = $fingerprint;
+        }
+
+        $query = http_build_query($params);
+        $shareUrl = sprintf('vless://%s@%s:%d?%s#%s', $uuid, $host, $port, $query, rawurlencode($node->name));
+
+        $alpn = $vless['alpn'] ?? 'h2,http/1.1';
+        $alpnList = is_array($alpn)
+            ? $alpn
+            : array_values(array_filter(array_map('trim', explode(',', (string) $alpn))));
+
+        return [
+            'protocol' => VpnProtocol::Vless->value,
+            'connection_id' => $peer->peer_code,
+            'peer_id' => $peer->peer_code,
+            'uuid' => $uuid,
+            'dns' => config('vpn.dns', ['1.1.1.1', '1.0.0.1']),
+            'mtu' => (int) config('vpn.vless.mtu', 1400),
+            'server' => [
+                'id' => $node->id,
+                'name' => $node->name,
+                'location' => $node->location?->display_name ?? 'Default',
+                'host' => $host,
+                'port' => $port,
+                'endpoint' => $host.':'.$port,
+                'security' => $security,
+                'sni' => $sni,
+                'flow' => $flow,
+                'fingerprint' => $fingerprint,
+                'alpn' => implode(',', $alpnList),
+            ],
+            'vless' => [
+                'uuid' => $uuid,
+                'encryption' => 'none',
+                'transport' => 'tcp',
+                'security' => $security,
+                'sni' => $sni,
+                'fingerprint' => $fingerprint,
+                'flow' => $flow,
+                'alpn' => $alpnList,
+            ],
+            'share_url' => $shareUrl,
+        ];
+    }
+
+    private function resolveProtocol(?string $raw): VpnProtocol
+    {
+        $value = strtolower(trim((string) ($raw ?? VpnProtocol::Wireguard->value)));
+
+        return VpnProtocol::tryFrom($value) ?? VpnProtocol::Wireguard;
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     * @return array{ok: bool, identity?: string, code?: string, message?: string, status?: int}
+     */
+    private function resolveClientIdentity(VpnProtocol $protocol, array $payload): array
+    {
+        if ($protocol === VpnProtocol::Wireguard) {
+            $clientPublicKey = trim((string) ($payload['client_public_key'] ?? ''));
+            if (! $this->isValidPublicKey($clientPublicKey)) {
+                return [
+                    'ok' => false,
+                    'code' => 'INVALID_PUBLIC_KEY',
+                    'message' => 'The provided WireGuard public key is invalid.',
+                    'status' => 422,
+                ];
+            }
+
+            return ['ok' => true, 'identity' => $clientPublicKey];
+        }
+
+        $clientUuid = trim((string) ($payload['client_uuid'] ?? ''));
+        if ($clientUuid === '') {
+            $clientUuid = (string) Str::uuid();
+        }
+
+        if (! Str::isUuid($clientUuid)) {
+            return [
+                'ok' => false,
+                'code' => 'VALIDATION_ERROR',
+                'message' => 'The provided VLESS client UUID is invalid.',
+                'status' => 422,
+            ];
+        }
+
+        return ['ok' => true, 'identity' => $clientUuid];
     }
 }

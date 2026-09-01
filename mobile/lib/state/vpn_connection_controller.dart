@@ -21,9 +21,14 @@ class VpnConnectionController {
       VpnConnectionState.disconnecting,
     },
     VpnConnectionState.provisioning: {
-      VpnConnectionState.connecting,
+      VpnConnectionState.requestingPermission,
       VpnConnectionState.error,
       VpnConnectionState.disconnecting,
+    },
+    VpnConnectionState.requestingPermission: {
+      VpnConnectionState.connecting,
+      VpnConnectionState.error,
+      VpnConnectionState.disconnected,
     },
     VpnConnectionState.connecting: {
       VpnConnectionState.connected,

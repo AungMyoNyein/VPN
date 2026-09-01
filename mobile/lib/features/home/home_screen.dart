@@ -1,12 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:vpn_mobile/core/app_config.dart';
-import 'package:vpn_mobile/core/models/vpn_provision_result.dart';
-import 'package:vpn_mobile/core/wireguard_key_service.dart';
 import 'package:vpn_mobile/features/account/account_screen.dart';
 import 'package:vpn_mobile/features/locations/locations_screen.dart';
 import 'package:vpn_mobile/features/settings/settings_screen.dart';
-import 'package:vpn_mobile/state/app_auth_state.dart';
+import 'package:vpn_mobile/state/vpn_connection_state.dart';
+import 'package:vpn_mobile/state/vpn_manager.dart';
+import 'package:vpn_mobile/widgets/connection_control.dart';
+import 'package:vpn_mobile/widgets/connection_timer.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -22,16 +23,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final auth = context.watch<AppAuthState>();
-    final account = auth.account;
-
     final pages = [
-      _HomeBody(
-        planName: account?.planName ?? 'Loading…',
-        expiresAt: account?.expiresAt,
-        status: account?.status ?? 'UNKNOWN',
-      ),
-      const LocationsScreen(),
+      const _HomeBody(),
+      const LocationsScreen(embedded: true),
       const AccountScreen(),
       const SettingsScreen(),
     ];
@@ -52,170 +46,184 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
-class _HomeBody extends StatefulWidget {
-  const _HomeBody({
-    required this.planName,
-    required this.expiresAt,
-    required this.status,
-  });
-
-  final String planName;
-  final DateTime? expiresAt;
-  final String status;
-
-  @override
-  State<_HomeBody> createState() => _HomeBodyState();
-}
-
-class _HomeBodyState extends State<_HomeBody> {
-  final _keyService = WireguardKeyService();
-  VpnProvisionResult? _provisionResult;
-  bool _provisioning = false;
-  String? _errorMessage;
-
-  String get _expiryLabel {
-    if (widget.expiresAt == null) return 'No expiry date';
-    final local = widget.expiresAt!.toLocal();
-    return '${local.day.toString().padLeft(2, '0')} '
-        '${_monthName(local.month)} ${local.year}';
-  }
-
-  static String _monthName(int month) {
-    const names = [
-      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
-    ];
-    return names[month - 1];
-  }
-
-  Future<void> _prepareVpn() async {
-    setState(() {
-      _provisioning = true;
-      _errorMessage = null;
-    });
-
-    try {
-      final auth = context.read<AppAuthState>();
-      final clientPublicKey = await _keyService.getOrCreatePublicKey();
-      final result = await auth.apiClient.provisionVpn(
-        clientPublicKey: clientPublicKey,
-      );
-
-      if (mounted) {
-        setState(() {
-          _provisionResult = result;
-          _provisioning = false;
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _errorMessage = 'Provisioning failed: $e';
-          _provisioning = false;
-        });
-      }
-    }
-  }
+class _HomeBody extends StatelessWidget {
+  const _HomeBody();
 
   @override
   Widget build(BuildContext context) {
-    final result = _provisionResult;
+    final vpn = context.watch<VpnManager>();
+    final theme = Theme.of(context);
+    final protected = vpn.isProtected;
+    final busy = vpn.isBusy;
 
     return SafeArea(
       child: Padding(
-        padding: const EdgeInsets.all(24),
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const SizedBox(height: 24),
-            Text(
-              result != null
-                  ? 'VPN Configuration Ready'
-                  : 'VPN Access Ready',
-              style: Theme.of(context).textTheme.headlineSmall,
-            ),
-            const SizedBox(height: 24),
-            Icon(
-              result != null
-                  ? Icons.vpn_key_outlined
-                  : Icons.verified_user_outlined,
-              size: 80,
-              color: Theme.of(context).colorScheme.primary,
-            ),
-            const SizedBox(height: 12),
-            Text('${widget.planName} · ${widget.status}'),
             const SizedBox(height: 8),
             Text(
-              'Expires $_expiryLabel',
-              style: Theme.of(context).textTheme.bodyMedium,
-            ),
-            if (_errorMessage != null) ...[
-              const SizedBox(height: 12),
-              Text(
-                _errorMessage!,
-                style: const TextStyle(color: Colors.red),
-                textAlign: TextAlign.center,
+              'VPN',
+              style: theme.textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.w600,
               ),
+            ),
+            const Spacer(flex: 2),
+            Text(
+              _statusHeadline(vpn.state),
+              textAlign: TextAlign.center,
+              style: theme.textTheme.headlineSmall?.copyWith(
+                fontWeight: FontWeight.w700,
+                color: protected
+                    ? theme.colorScheme.primary
+                    : theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 32),
+            Center(
+              child: ConnectionControl(
+                state: vpn.state,
+                onConnect: busy ? null : () => vpn.connect(),
+                onDisconnect: busy ? null : () => vpn.disconnect(),
+              ),
+            ),
+            const SizedBox(height: 32),
+            if (vpn.userMessage != null) ...[
+              Text(
+                vpn.userMessage!,
+                textAlign: TextAlign.center,
+                style: TextStyle(color: theme.colorScheme.error),
+              ),
+              const SizedBox(height: 16),
             ],
-            const SizedBox(height: 24),
-            if (result == null)
-              FilledButton.icon(
-                onPressed: _provisioning ? null : _prepareVpn,
-                icon: _provisioning
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.tune),
-                label: Text(_provisioning
-                    ? 'Preparing Configuration…'
-                    : 'Prepare VPN Configuration'),
-              )
-            else ...[
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        result.server.location,
-                        style: Theme.of(context).textTheme.titleMedium,
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'Server: ${result.server.name} (${result.server.endpoint})',
-                        style: Theme.of(context).textTheme.bodyMedium,
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'Assigned IP: ${result.address}',
-                        style: Theme.of(context).textTheme.bodyMedium,
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'Your VPN access is prepared.',
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.primary,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
-                  ),
+            FilledButton(
+              onPressed: busy
+                  ? null
+                  : protected
+                      ? () => vpn.disconnect()
+                      : () => vpn.connect(),
+              style: FilledButton.styleFrom(
+                minimumSize: const Size.fromHeight(52),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
                 ),
               ),
-              const SizedBox(height: 12),
-              const Text(
-                'System tunnel connection arriving in Phase 4',
-                style: TextStyle(fontSize: 12, color: Colors.grey),
+              child: Text(_primaryButtonLabel(vpn.state)),
+            ),
+            const SizedBox(height: 24),
+            _LocationCard(
+              smartLocation: vpn.preferences?.smartLocation ?? true,
+              label: vpn.locationLabel,
+              protocolLabel: vpn.selectedProtocol.label,
+              onTap: () => _openLocations(context),
+            ),
+            if (protected) ...[
+              const SizedBox(height: 16),
+              ConnectionTimer(
+                connectedSinceEpochMs: vpn.statistics.connectedSinceEpochMs,
               ),
             ],
-            const Spacer(),
+            const Spacer(flex: 3),
             Text(
               'App v${AppConfig.appVersion}',
-              style: Theme.of(context).textTheme.bodySmall,
+              textAlign: TextAlign.center,
+              style: theme.textTheme.bodySmall,
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  String _statusHeadline(VpnConnectionState state) {
+    switch (state) {
+      case VpnConnectionState.connected:
+        return 'PROTECTED';
+      case VpnConnectionState.reconnecting:
+        return 'RECONNECTING…';
+      case VpnConnectionState.connecting:
+      case VpnConnectionState.preparing:
+      case VpnConnectionState.authorizing:
+      case VpnConnectionState.provisioning:
+      case VpnConnectionState.requestingPermission:
+        return 'CONNECTING…';
+      case VpnConnectionState.disconnecting:
+        return 'DISCONNECTING…';
+      case VpnConnectionState.error:
+        return 'NOT PROTECTED';
+      case VpnConnectionState.disconnected:
+        return 'NOT PROTECTED';
+    }
+  }
+
+  String _primaryButtonLabel(VpnConnectionState state) {
+    if (state.isConnectedLike) return 'DISCONNECT';
+    if (state.isBusy) return 'CONNECTING…';
+    return 'CONNECT';
+  }
+
+  void _openLocations(BuildContext context) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Choose a location in the Locations tab')),
+    );
+  }
+}
+
+class _LocationCard extends StatelessWidget {
+  const _LocationCard({
+    required this.smartLocation,
+    required this.label,
+    required this.protocolLabel,
+    required this.onTap,
+  });
+
+  final bool smartLocation;
+  final String label;
+  final String protocolLabel;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Material(
+      color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            children: [
+              Icon(Icons.public, color: theme.colorScheme.primary),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      smartLocation ? 'Smart Location' : 'Selected Location',
+                      style: theme.textTheme.labelMedium?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    Text(
+                      label,
+                      style: theme.textTheme.titleMedium,
+                    ),
+                    Text(
+                      protocolLabel,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_right),
+            ],
+          ),
         ),
       ),
     );

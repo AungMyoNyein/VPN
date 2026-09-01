@@ -15,7 +15,9 @@ class VpnPeer extends Model
         'peer_code',
         'device_id',
         'node_id',
+        'protocol',
         'public_key',
+        'client_identity',
         'assigned_ip',
         'status',
         'failure_reason',
@@ -39,6 +41,12 @@ class VpnPeer extends Model
             'rx_bytes' => 'integer',
             'tx_bytes' => 'integer',
         ];
+    }
+
+    public function protocol(): \App\Enums\VpnProtocol
+    {
+        return \App\Enums\VpnProtocol::tryFrom(strtolower($this->protocol ?? 'wireguard'))
+            ?? \App\Enums\VpnProtocol::Wireguard;
     }
 
     public function device(): BelongsTo

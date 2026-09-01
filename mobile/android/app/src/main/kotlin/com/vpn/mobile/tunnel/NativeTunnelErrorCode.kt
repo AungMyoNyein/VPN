@@ -1,0 +1,26 @@
+package com.vpn.mobile.tunnel
+
+/**
+ * Standardized error codes for Flutter/Kotlin native contract.
+ */
+object NativeTunnelErrorCode {
+    const val PERMISSION_DENIED = "PERMISSION_DENIED"
+    const val INVALID_CONFIG = "INVALID_CONFIG"
+    const val TUNNEL_START_FAILED = "TUNNEL_START_FAILED"
+    const val HANDSHAKE_TIMEOUT = "HANDSHAKE_TIMEOUT"
+    const val NETWORK_LOST = "NETWORK_LOST"
+    const val KEYSTORE_ERROR = "KEYSTORE_ERROR"
+    const val SERVICE_UNAVAILABLE = "SERVICE_UNAVAILABLE"
+    const val UNKNOWN = "UNKNOWN"
+
+    // VLESS / sing-box
+    const val VLESS_CONFIG_INVALID = "VLESS_CONFIG_INVALID"
+    const val VLESS_ENGINE_START_FAILED = "VLESS_ENGINE_START_FAILED"
+    const val VLESS_TLS_FAILED = "VLESS_TLS_FAILED"
+    const val VLESS_DNS_FAILED = "VLESS_DNS_FAILED"
+    const val VLESS_TUN_FAILED = "VLESS_TUN_FAILED"
+    const val VLESS_CONNECTION_TIMEOUT = "VLESS_CONNECTION_TIMEOUT"
+    const val VLESS_SERVER_UNREACHABLE = "VLESS_SERVER_UNREACHABLE"
+    const val VLESS_AUTH_FAILED = "VLESS_AUTH_FAILED"
+    const val VLESS_ENGINE_CRASHED = "VLESS_ENGINE_CRASHED"
+}

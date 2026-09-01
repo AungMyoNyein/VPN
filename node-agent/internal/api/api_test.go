@@ -32,7 +32,7 @@ func setupTestServer(t *testing.T) (*httptest.Server, *wireguard.RealWireguardMa
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	mux := http.NewServeMux()
-	api.RegisterRoutes(mux, logger, cfg, mgr, metrics)
+	api.RegisterRoutes(mux, logger, cfg, mgr, nil, metrics)
 	handler := api.RequestLoggerMiddleware(logger, metrics)(mux)
 
 	server := httptest.NewServer(handler)

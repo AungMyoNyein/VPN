@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api\V1;
 
+use App\Enums\VpnProtocol;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\V1\VpnProvisionRequest;
 use App\Models\Device;
@@ -77,12 +78,24 @@ class VpnController extends Controller
     }
 
     /**
+     * Get supported VPN protocols.
+     */
+    public function protocols(): JsonResponse
+    {
+        return ApiResponse::success([
+            'protocols' => VpnProtocol::values(),
+            'default' => VpnProtocol::Wireguard->value,
+        ]);
+    }
+
+    /**
      * Get recommended VPN server.
      */
     public function recommendedServer(Request $request): JsonResponse
     {
         $customer = $request->attributes->get('customer');
-        $recommended = $this->nodeSelectionService->getRecommendedServer($customer);
+        $protocol = VpnProtocol::tryFrom(strtolower((string) $request->query('protocol', VpnProtocol::Wireguard->value)));
+        $recommended = $this->nodeSelectionService->getRecommendedServer($customer, $protocol);
 
         if ($recommended === null) {
             return ApiResponse::error(
@@ -115,6 +128,7 @@ class VpnController extends Controller
 
         return ApiResponse::success([
             'active' => $activePeer->isActive(),
+            'protocol' => $activePeer->protocol()->value,
             'peer' => [
                 'peer_code' => $activePeer->peer_code,
                 'status' => $activePeer->status->value,
