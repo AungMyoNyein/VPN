@@ -18,6 +18,7 @@ import io.nekohasekai.libbox.PlatformInterface
 import io.nekohasekai.libbox.StringIterator
 import io.nekohasekai.libbox.TunOptions
 import io.nekohasekai.libbox.WIFIState
+import java.io.File
 import java.net.Inet6Address
 import java.net.InterfaceAddress
 import java.net.NetworkInterface as JavaNetworkInterface
@@ -36,6 +37,10 @@ class SingBoxPlatformInterface(
         appContext.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
 
   var tunPfd: ParcelFileDescriptor? = null
+        private set
+
+    /** Android-assigned TUN interface name (e.g. tun1), for traffic readiness checks. */
+    var tunInterfaceName: String? = null
         private set
 
     private var interfaceListener: InterfaceUpdateListener? = null
@@ -92,9 +97,37 @@ class SingBoxPlatformInterface(
         }
 
         tunPfd?.close()
+        val beforeTun = currentTunInterfaces()
         val pfd = builder.establish() ?: throw Exception("android: vpn establish failed")
         tunPfd = pfd
+        tunInterfaceName = detectTunInterfaceName(beforeTun)
         return pfd.fd
+    }
+
+    private fun currentTunInterfaces(): Set<String> {
+        return try {
+            File("/sys/class/net").listFiles()
+                ?.mapNotNull { entry ->
+                    val name = entry.name
+                    if (name.startsWith("tun")) name else null
+                }
+                ?.toSet()
+                ?: emptySet()
+        } catch (_: Exception) {
+            emptySet()
+        }
+    }
+
+    private fun detectTunInterfaceName(before: Set<String>): String {
+        val after = currentTunInterfaces()
+        val created = after - before
+        if (created.size == 1) {
+            return created.first()
+        }
+        if (after.isNotEmpty()) {
+            return after.sorted().last()
+        }
+        return "tun0"
     }
 
     override fun writeLog(message: String?) {
@@ -242,6 +275,7 @@ class SingBoxPlatformInterface(
     fun closeTun() {
         tunPfd?.close()
         tunPfd = null
+        tunInterfaceName = null
     }
 
     private fun InterfaceAddress.toPrefix(): String {

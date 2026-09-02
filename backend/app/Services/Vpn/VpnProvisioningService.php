@@ -75,7 +75,10 @@ class VpnProvisioningService
                 ->where('device_id', $device->id)
                 ->first();
 
-            if ($existingOp !== null && $existingOp->status === ProvisioningOperationStatus::Succeeded && $existingOp->response_payload !== null) {
+            if ($existingOp !== null
+                && $existingOp->status === ProvisioningOperationStatus::Succeeded
+                && $existingOp->response_payload !== null
+                && $this->idempotencyPayloadMatchesRequest($existingOp->response_payload, $locationId, $protocol)) {
                 return [
                     'ok' => true,
                     'data' => $existingOp->response_payload,
@@ -475,6 +478,30 @@ class VpnProvisioningService
         $value = strtolower(trim((string) ($raw ?? VpnProtocol::Wireguard->value)));
 
         return VpnProtocol::tryFrom($value) ?? VpnProtocol::Wireguard;
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     */
+    private function idempotencyPayloadMatchesRequest(array $payload, ?int $locationId, VpnProtocol $protocol): bool
+    {
+        $cachedProtocol = VpnProtocol::tryFrom(strtolower((string) ($payload['protocol'] ?? '')));
+        if ($cachedProtocol !== $protocol) {
+            return false;
+        }
+
+        if ($locationId === null) {
+            return true;
+        }
+
+        $serverId = isset($payload['server']['id']) ? (int) $payload['server']['id'] : null;
+        if ($serverId === null) {
+            return false;
+        }
+
+        $node = VpnNode::query()->find($serverId);
+
+        return $node !== null && $node->location_id === $locationId;
     }
 
     /**

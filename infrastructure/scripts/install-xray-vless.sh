@@ -1,33 +1,21 @@
 #!/usr/bin/env bash
 # Install Xray-core VLESS inbound on a VPN node (Ubuntu).
-# Usage: sudo ./install-xray-vless.sh zentunnel.net 443
+# Called by install-vpn-node.sh or standalone:
+#   sudo ./install-xray-vless.sh vps10.zentunnel.net 443
 
 set -euo pipefail
 
 DOMAIN="${1:-zentunnel.net}"
 VLESS_PORT="${2:-443}"
-XRAY_VERSION="${XRAY_VERSION:-1.8.24}"
 INSTALL_DIR="/usr/local/bin"
 CONFIG_DIR="/etc/xray"
 DATA_DIR="/var/lib/vpn-platform"
 
-echo "=== Installing Xray ${XRAY_VERSION} ==="
-TMP=$(mktemp -d)
-trap 'rm -rf "$TMP"' EXIT
+echo "=== Installing Xray for VLESS ==="
 
-ARCH=$(uname -m)
-case "$ARCH" in
-  x86_64) XRAY_ARCH="64" ;;
-  aarch64) XRAY_ARCH="arm64-v8a" ;;
-  *) echo "Unsupported arch: $ARCH"; exit 1 ;;
-esac
-
-ZIP="Xray-linux-${XRAY_ARCH}.zip"
-URL="https://github.com/XTLS/Xray-core/releases/download/v${XRAY_VERSION}/${ZIP}"
-curl -fsSL "$URL" -o "$TMP/$ZIP"
-unzip -q "$TMP/$ZIP" -d "$TMP"
-install -m 755 "$TMP/xray" "$INSTALL_DIR/xray"
-
+if ! command -v xray >/dev/null 2>&1; then
+  bash -c "$(curl -fsSL https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
+fi
 mkdir -p "$CONFIG_DIR" "$DATA_DIR"
 chmod 700 "$CONFIG_DIR"
 

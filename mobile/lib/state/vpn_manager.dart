@@ -59,6 +59,7 @@ class VpnManager extends ChangeNotifier {
 
   void setProtocol(VpnProtocol protocol) {
     _preferences?.selectedProtocol = protocol.value;
+    _preferences?.provisionIdempotencyKey = null;
     _loadRecommendedServer().then((_) => notifyListeners());
   }
 
@@ -95,6 +96,7 @@ class VpnManager extends ChangeNotifier {
     _selectedLocation = location;
     _preferences?.smartLocation = location == null;
     _preferences?.selectedLocationId = location?.id;
+    _preferences?.provisionIdempotencyKey = null;
     _locationLabel = location?.displayName ?? 'Smart Location';
     notifyListeners();
   }

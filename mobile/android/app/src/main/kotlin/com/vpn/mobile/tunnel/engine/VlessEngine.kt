@@ -63,7 +63,7 @@ class VlessEngine : VpnEngine {
                 boxService = serviceInstance
                 serviceInstance.start()
 
-                tunInterfaceName = platformImpl.tunPfd?.let { "tun0" }
+                tunInterfaceName = platformImpl.tunInterfaceName
                 startReadinessPolling(vlessConfig)
                 startStatisticsPolling()
             } catch (e: Exception) {

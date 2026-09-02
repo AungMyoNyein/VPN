@@ -1,10 +1,11 @@
-# Ansible inventory and playbooks arrive in Phase 3/7.
-# Phase 0: placeholder only — do not target production VPN hosts.
+# Ansible (optional)
 
-# Example future layout:
-# inventories/
-#   staging/
-#   production/
-# playbooks/
-#   site.yml
-#   vpn-node.yml
+For ad-hoc production installs, prefer the shell scripts in `../scripts/`:
+
+- `install-api-cms-server.sh` — API, CMS, Postgres, Redis, control plane
+- `install-vpn-node.sh` — WireGuard, node-agent, VLESS
+- `register-remote-node.sh` — control plane node registration
+
+See `../scripts/README.md` for usage examples.
+
+The `playbooks/vpn-node.yml` playbook remains a reference; it is not required when using the install scripts.

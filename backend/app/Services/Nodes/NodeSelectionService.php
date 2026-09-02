@@ -25,6 +25,7 @@ class NodeSelectionService
 
         $query = VpnNode::query()
             ->with(['location', 'ipPools' => fn ($q) => $q->where('active', true)])
+            ->where('adapter_type', 'remote')
             ->where('lifecycle_status', NodeLifecycleStatus::Active)
             ->where('health_status', NodeHealthStatus::Healthy)
             ->where('maintenance_mode', false)
@@ -109,7 +110,8 @@ class NodeSelectionService
         return Location::query()
             ->where('active', true)
             ->with(['vpnNodes' => function ($q) {
-                $q->where('lifecycle_status', NodeLifecycleStatus::Active)
+                $q->where('adapter_type', 'remote')
+                    ->where('lifecycle_status', NodeLifecycleStatus::Active)
                     ->where('health_status', NodeHealthStatus::Healthy)
                     ->where('maintenance_mode', false)
                     ->where('draining', false)

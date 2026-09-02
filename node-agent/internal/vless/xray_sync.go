@@ -128,7 +128,12 @@ func (m *Manager) persistLocked() error {
 	}
 
 	// Sync Xray outside the peer mutex (caller must not hold m.mu).
-	go func() { _ = m.syncXrayFromSnapshot(peers) }()
+	snapshot := append([]PeerInfo(nil), peers...)
+	go func() {
+		if err := m.syncXrayFromSnapshot(snapshot); err != nil {
+			fmt.Fprintf(os.Stderr, "xray sync failed: %v\n", err)
+		}
+	}()
 
 	return nil
 }
