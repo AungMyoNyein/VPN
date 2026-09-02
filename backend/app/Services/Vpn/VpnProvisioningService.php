@@ -408,7 +408,7 @@ class VpnProvisioningService
     {
         $vless = $node->vlessConfig();
         $uuid = $peer->client_identity ?? $peer->public_key;
-        $host = $node->public_endpoint;
+        $host = (string) ($vless['host'] ?? $node->public_endpoint);
         $port = $node->vlessPort();
         $security = $vless['security'] ?? 'tls';
         $sni = $vless['sni'] ?? $host;

@@ -79,6 +79,11 @@ class VpnNode extends Model
         $defaults = config('vpn.vless', []);
         $nodeConfig = is_array($this->protocol_config) ? $this->protocol_config : [];
 
+        if (isset($nodeConfig['vless']) && is_array($nodeConfig['vless'])) {
+            $nodeConfig = array_merge($nodeConfig, $nodeConfig['vless']);
+            unset($nodeConfig['vless']);
+        }
+
         return array_merge($defaults, $nodeConfig);
     }
 
